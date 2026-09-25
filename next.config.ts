@@ -1,6 +1,14 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // [VIBER] Disable RSC render cache and Enable Turbopack FS cache so edits are reflected immediately.
+  experimental: { serverComponentsHmrCache: false, turbopackFileSystemCacheForDev: true },
+  // [VIBER] Allow Next dev client/HMR through sandbox preview hosts.
+  allowedDevOrigins: [
+    '*.cio.sandbox.gov.sg',
+    '*.cio-uat.sandbox.gov.sg',
+    '**.code.run',
+  ],
   output: "standalone",
   // self-heal's build-check runs `npm run build` after every response as
   // a proxy for the POC deploy. Without this, that build writes into the

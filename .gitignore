@@ -50,3 +50,15 @@ next-env.d.ts
 __pycache__/
 *.py[cod]
 .streamlit/secrets.toml
+
+# Next.js files (disabled - using Streamlit instead)
+package.json.backup
+package-lock.json.backup
+/node_modules
+
+# VIBER Studio internal files (never commit these)
+.deps-hash
+.viber-prepared
+.viber-vite.config.mjs
+*.viber-bak
+package-lock.json
