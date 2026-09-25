@@ -1,0 +1,8 @@
+{
+  "input_tokens": 708,
+  "output_tokens": 1111,
+  "cache_read_tokens": 88296,
+  "cache_write_tokens": 51701,
+  "model": "bedrock.claude-haiku-4-5",
+  "last_updated": "2026-09-25T05:31:32.411Z"
+}
