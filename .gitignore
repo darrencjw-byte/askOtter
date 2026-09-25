@@ -44,3 +44,9 @@ next-env.d.ts
 
 /src/generated/prisma
 /generated
+
+# python / streamlit
+.venv/
+__pycache__/
+*.py[cod]
+.streamlit/secrets.toml
