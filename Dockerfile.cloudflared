@@ -1,0 +1,7 @@
+FROM cloudflare/cloudflared:latest
+
+# The TUNNEL_TOKEN environment variable will be provided by Northflank
+# Cloudflared will automatically use it to connect to the tunnel
+
+# Explicitly run the tunnel command
+CMD ["tunnel", "run"]

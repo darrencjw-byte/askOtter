@@ -1,0 +1,10 @@
+# DEPLOYMENT_TYPE: northflank
+
+# This project is deployed to Northflank via Git integration.
+# No GitLab CI/CD pipelines are needed - Northflank automatically
+# builds and deploys on git push.
+
+# Disable all pipelines for this project
+workflow:
+  rules:
+    - when: never
