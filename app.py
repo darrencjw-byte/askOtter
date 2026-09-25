@@ -22,6 +22,10 @@ def init_session_state():
         st.session_state.messages = []
     if "query_engine" not in st.session_state:
         st.session_state.query_engine = None
+    if "sharepoint_url" not in st.session_state:
+        st.session_state.sharepoint_url = os.getenv("SHAREPOINT_URL", "")
+    if "gdrive_url" not in st.session_state:
+        st.session_state.gdrive_url = os.getenv("GDRIVE_URL", "")
 
 init_session_state()
 
@@ -72,6 +76,15 @@ def page_ask_otter():
         st.markdown("---")
         st.markdown("**Index Status:** `Active (Cloud Sync)`")
         st.markdown("**Model:** `Azure GPT-4o / Vertex AI`")
+
+        # Display configured sources
+        if st.session_state.sharepoint_url or st.session_state.gdrive_url:
+            st.markdown("---")
+            st.markdown("### 📂 Data Sources")
+            if st.session_state.sharepoint_url:
+                st.caption(f"📊 SharePoint: `{st.session_state.sharepoint_url[:40]}...`")
+            if st.session_state.gdrive_url:
+                st.caption(f"📁 Google Drive: `{st.session_state.gdrive_url[:40]}...`")
 
     # Display Chat History
     for message in st.session_state.messages:
@@ -171,6 +184,82 @@ def page_methodology():
 [ Grounded Answer + Citations ] <--- [ LLM Synthesis ] <----+
     """, language="text")
 
+# PAGE 4: SETTINGS
+def page_settings():
+    st.title("⚙️ Data Source Configuration")
+    st.caption("Connect your SharePoint or Google Drive folders using your own credentials")
+    st.divider()
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("### 📊 SharePoint Configuration")
+        st.caption("Access documents from your Microsoft 365 account")
+
+        sharepoint_input = st.text_input(
+            "SharePoint Folder URL",
+            value=st.session_state.sharepoint_url,
+            placeholder="https://yourorg.sharepoint.com/sites/...",
+            help="Enter the SharePoint folder URL you have access to"
+        )
+
+        if st.button("Save SharePoint URL", type="primary", key="save_sp"):
+            st.session_state.sharepoint_url = sharepoint_input
+            st.success("SharePoint URL saved successfully")
+            time.sleep(0.5)
+            st.rerun()
+
+        if st.session_state.sharepoint_url:
+            st.info(f"**Current URL:**\n\n`{st.session_state.sharepoint_url}`")
+            st.warning("⚠️ Authentication required: You will need to authenticate with your Microsoft 365 account to access these files")
+
+        if st.button("Clear SharePoint URL", type="secondary", key="clear_sp"):
+            st.session_state.sharepoint_url = ""
+            st.rerun()
+
+    with col2:
+        st.markdown("### 📁 Google Drive Configuration")
+        st.caption("Access documents from your Google account")
+
+        gdrive_input = st.text_input(
+            "Google Drive Folder URL",
+            value=st.session_state.gdrive_url,
+            placeholder="https://drive.google.com/drive/folders/...",
+            help="Enter the Google Drive folder URL you have access to"
+        )
+
+        if st.button("Save Google Drive URL", type="primary", key="save_gd"):
+            st.session_state.gdrive_url = gdrive_input
+            st.success("Google Drive URL saved successfully")
+            time.sleep(0.5)
+            st.rerun()
+
+        if st.session_state.gdrive_url:
+            st.info(f"**Current URL:**\n\n`{st.session_state.gdrive_url}`")
+            st.warning("⚠️ Authentication required: You will need to authenticate with your Google account to access these files")
+
+        if st.button("Clear Google Drive URL", type="secondary", key="clear_gd"):
+            st.session_state.gdrive_url = ""
+            st.rerun()
+
+    st.divider()
+    st.markdown("#### 💡 How It Works")
+    st.markdown("""
+    * **User-Based Access**: Documents are accessed using your own Microsoft 365 or Google account credentials
+    * **Personal Permissions**: You can only access folders and files you personally have permission to view
+    * **OAuth Authentication**: When indexing starts, you will be prompted to authenticate with Microsoft or Google
+    * **Secure Tokens**: Your access tokens are stored securely and used only for retrieving documents you own
+    * **No Shared Access**: Each user authenticates individually — no shared service account
+    """)
+
+    st.markdown("#### 🔐 Privacy & Security")
+    st.success("""
+    ✓ Your credentials are never stored in plain text
+    ✓ Only you can access your own files
+    ✓ OAuth tokens expire and require re-authentication
+    ✓ No cross-user data access
+    """)
+
 # -----------------------------------------------------------------------------
 # 5. NAVIGATION ROUTER & APP ENTRY POINT
 # -----------------------------------------------------------------------------
@@ -181,11 +270,13 @@ else:
     p_chat = st.Page(page_ask_otter, title="AskOtter Chat", icon="💬", default=True)
     p_about = st.Page(page_about_us, title="About Us", icon="ℹ️")
     p_method = st.Page(page_methodology, title="Methodology", icon="⚙️")
+    p_settings = st.Page(page_settings, title="Data Source Settings", icon="⚙️")
 
     # Routing Configuration
     pg = st.navigation({
         "Core Assistant": [p_chat],
-        "Documentation": [p_about, p_method]
+        "Documentation": [p_about, p_method],
+        "Configuration": [p_settings]
     })
 
     # Sidebar User Profile & Logout
