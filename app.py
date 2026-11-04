@@ -104,7 +104,20 @@ def google_signin_screen():
             return
 
         auth_url = google_auth.get_authorization_url()
-        st.link_button("🔐 Sign in with Google", auth_url, type="primary", use_container_width=True)
+        # st.link_button always opens in a new tab (target="_blank"), which breaks this
+        # flow: Google's redirect lands in that new tab, not the tab holding this
+        # session, so the original tab never sees the callback and looks stuck.
+        # Render a plain same-tab link instead so the redirect returns to this tab.
+        st.markdown(
+            f"""
+            <a href="{auth_url}" target="_self" style="
+                display: block; text-align: center; text-decoration: none;
+                background-color: #FF4B4B; color: white; font-weight: 600;
+                padding: 0.6rem 1rem; border-radius: 0.5rem; width: 100%;
+            ">🔐 Sign in with Google</a>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def login_screen():
