@@ -16,7 +16,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application files
-COPY app.py .
+COPY app.py rag_engine.py google_auth.py drive_sync.py .
 COPY .streamlit .streamlit/
 
 # Expose Streamlit default port (but we'll run on 3000)
