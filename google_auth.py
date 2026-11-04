@@ -33,14 +33,18 @@ def is_configured() -> bool:
 
 
 def get_authorization_url() -> str:
-    flow = Flow.from_client_config(_client_config(), scopes=SCOPES, redirect_uri=_redirect_uri())
+    # PKCE is skipped: this is a confidential client (holds a client_secret), and
+    # PKCE's code_verifier would need to survive the round-trip to Google and back —
+    # which st.session_state cannot guarantee across a redirect behind a proxy/multiple
+    # instances. The client_secret itself already protects the token exchange.
+    flow = Flow.from_client_config(
+        _client_config(), scopes=SCOPES, redirect_uri=_redirect_uri(), autogenerate_code_verifier=False
+    )
     auth_url, state = flow.authorization_url(
         access_type="offline",
         include_granted_scopes="true",
         prompt="consent",
     )
-    st.session_state["oauth_state"] = state
-    st.session_state["oauth_code_verifier"] = flow.code_verifier
     return auth_url
 
 
@@ -50,7 +54,6 @@ def handle_callback(code: str) -> dict:
         _client_config(),
         scopes=SCOPES,
         redirect_uri=_redirect_uri(),
-        code_verifier=st.session_state.get("oauth_code_verifier"),
         autogenerate_code_verifier=False,
     )
     flow.fetch_token(code=code)
