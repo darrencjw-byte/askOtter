@@ -8,6 +8,7 @@ load_dotenv()
 import rag_engine
 import google_auth
 import drive_sync
+import cookie_auth
 
 # -----------------------------------------------------------------------------
 # 1. APPLICATION & PAGE CONFIGURATION
@@ -41,6 +42,27 @@ def init_session_state():
 init_session_state()
 
 # -----------------------------------------------------------------------------
+# 2a. RESTORE SESSION FROM BROWSER COOKIE (no server storage)
+# -----------------------------------------------------------------------------
+# st.session_state lives only in one server process's RAM. If that process
+# restarts, or a later request lands on a different replica behind the load
+# balancer, the in-memory state is gone even though the user did nothing
+# wrong — they'd be bounced back to the Google sign-in screen mid-session.
+# Restoring from an encrypted browser cookie (set once after a successful
+# sign-in) means the user's own browser — not the server — carries the
+# state needed to resume.
+if "_cookie_restore_attempted" not in st.session_state:
+    st.session_state["_cookie_restore_attempted"] = True
+    _restored = cookie_auth.load_session()
+    if _restored:
+        if _restored.get("google_credentials"):
+            st.session_state["google_credentials"] = _restored["google_credentials"]
+        if _restored.get("google_profile"):
+            st.session_state["google_profile"] = _restored["google_profile"]
+        if _restored.get("authenticated"):
+            st.session_state["authenticated"] = True
+
+# -----------------------------------------------------------------------------
 # 2b. GOOGLE OAUTH CALLBACK HANDLING
 # -----------------------------------------------------------------------------
 _query_params = st.query_params
@@ -48,6 +70,11 @@ if "code" in _query_params and not google_auth.is_signed_in():
     try:
         profile = google_auth.handle_callback(_query_params["code"])
         st.session_state["google_profile"] = profile
+        cookie_auth.save_session({
+            "google_credentials": st.session_state["google_credentials"],
+            "google_profile": profile,
+            "authenticated": st.session_state.get("authenticated", False),
+        })
         st.query_params.clear()
         st.rerun()
     except Exception as exc:
@@ -85,6 +112,11 @@ def login_screen():
                 target_password = os.getenv("APP_PASSWORD", "CFS@2027")
                 if password_input == target_password:
                     st.session_state.authenticated = True
+                    cookie_auth.save_session({
+                        "google_credentials": st.session_state.get("google_credentials"),
+                        "google_profile": st.session_state.get("google_profile"),
+                        "authenticated": True,
+                    })
                     st.success("Authentication successful! Redirecting...")
                     time.sleep(0.5)
                     st.rerun()
@@ -98,6 +130,7 @@ def logout():
     st.session_state.memory_index_status = None
     st.session_state.memory_index_error = None
     google_auth.sign_out()
+    cookie_auth.clear_session()
     st.rerun()
 
 
@@ -137,10 +170,55 @@ def ensure_index_built():
 # -----------------------------------------------------------------------------
 
 # PAGE 1: CHAT INTERFACE
+CHAT_PAGE_CSS = """
+<style>
+/* Desk-style soft gradient backdrop behind the main chat column */
+[data-testid="stAppViewContainer"] > .main {
+    background: radial-gradient(circle at 20% 0%, #efe6fb 0%, #f7f3fd 35%, #ffffff 70%);
+}
+
+/* Rounded, floating chat input bar */
+[data-testid="stChatInput"] {
+    border-radius: 20px;
+    box-shadow: 0 4px 24px rgba(90, 60, 160, 0.08);
+}
+[data-testid="stChatInput"] textarea {
+    font-size: 1.02rem;
+}
+
+/* Pill-shaped suggestion buttons */
+.askotter-suggestion-row button {
+    border-radius: 999px !important;
+    border: 1px solid #e3d9f5 !important;
+    background: #ffffff !important;
+    font-weight: 600 !important;
+    padding: 0.6rem 1.1rem !important;
+}
+.askotter-suggestion-row button:hover {
+    border-color: #8b5cf6 !important;
+    color: #6d28d9 !important;
+}
+
+/* Empty-state hero */
+.askotter-hero {
+    text-align: center;
+    padding-top: 4rem;
+}
+.askotter-hero h1 {
+    font-size: 2.1rem;
+    font-weight: 600;
+    color: #2a1f3d;
+}
+.askotter-hero p {
+    color: #6b6480;
+    font-size: 0.95rem;
+}
+</style>
+"""
+
+
 def page_ask_otter():
-    st.title("🦦 AskOtter Chat Assistant")
-    st.caption("Context-Aware Policy & Document Intelligence System")
-    st.divider()
+    st.markdown(CHAT_PAGE_CSS, unsafe_allow_html=True)
 
     # Auto-import from Drive + auto-build the index, once per session, in memory only
     if st.session_state.memory_index_status is None:
@@ -149,6 +227,9 @@ def page_ask_otter():
 
     # Sidebar Controls
     with st.sidebar:
+        st.markdown("### 🦦 AskOtter")
+        st.caption("Context-aware policy & document intelligence")
+        st.markdown("---")
         st.markdown("### 🛠️ Session Controls")
         if st.button("Clear Conversation", use_container_width=True, type="secondary"):
             st.session_state.messages = []
@@ -169,6 +250,38 @@ def page_ask_otter():
         st.markdown(f"**Index Status:** `{status_label}`")
         st.markdown("**Model:** `OpenAI gpt-4o-mini / text-embedding-3-large`")
 
+    has_history = len(st.session_state.messages) > 0
+
+    # Empty-state hero (Desk-style greeting + suggestion chips) shown until the first message
+    if not has_history:
+        st.markdown(
+            """
+            <div class="askotter-hero">
+                <h1>🦦 Ask away, your documents are ready</h1>
+                <p>Answers are grounded in the files from your Google Drive, imported fresh this session.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown('<div class="askotter-suggestion-row">', unsafe_allow_html=True)
+        sug_col1, sug_col2, sug_col3 = st.columns(3)
+        suggestion_clicked = None
+        with sug_col1:
+            if st.button("Summarise my documents", use_container_width=True, key="sug_1"):
+                suggestion_clicked = "Summarise the key points across my imported documents."
+        with sug_col2:
+            if st.button("Find a policy clause", use_container_width=True, key="sug_2"):
+                suggestion_clicked = "Find the clause or section that covers the main policy requirements."
+        with sug_col3:
+            if st.button("List document sources", use_container_width=True, key="sug_3"):
+                suggestion_clicked = "List the documents that were imported and indexed in this session."
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        if suggestion_clicked:
+            st.session_state["_pending_prompt"] = suggestion_clicked
+            st.rerun()
+
     # Display Chat History
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
@@ -185,7 +298,12 @@ def page_ask_otter():
     elif st.session_state.memory_index_status == "error":
         st.warning(f"⚠️ Could not build the index from Google Drive: {st.session_state.memory_index_error}")
 
-    if prompt := st.chat_input("Ask a question regarding internal documents..."):
+    prompt = st.chat_input("Ask me anything about your documents...")
+    pending = st.session_state.pop("_pending_prompt", None)
+    if pending:
+        prompt = pending
+
+    if prompt:
         # Store & render user message
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
