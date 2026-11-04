@@ -1,8 +1,8 @@
 {
-  "input_tokens": 10817,
-  "output_tokens": 55489,
-  "cache_read_tokens": 7199518,
-  "cache_write_tokens": 491835,
+  "input_tokens": 10985,
+  "output_tokens": 58801,
+  "cache_read_tokens": 7579523,
+  "cache_write_tokens": 575065,
   "model": "bedrock.claude-sonnet-5",
-  "last_updated": "2026-11-04T03:38:17.144Z"
+  "last_updated": "2026-11-04T03:52:48.970Z"
 }
