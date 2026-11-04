@@ -27,8 +27,12 @@ def init_session_state():
         st.session_state.authenticated = False
     if "messages" not in st.session_state:
         st.session_state.messages = []
-    if "query_engine" not in st.session_state:
-        st.session_state.query_engine = None
+    if "memory_index" not in st.session_state:
+        st.session_state.memory_index = None
+    if "memory_index_status" not in st.session_state:
+        st.session_state.memory_index_status = None  # None | "building" | "ready" | "error" | "empty"
+    if "memory_index_error" not in st.session_state:
+        st.session_state.memory_index_error = None
     if "sharepoint_url" not in st.session_state:
         st.session_state.sharepoint_url = os.getenv("SHAREPOINT_URL", "")
     if "gdrive_url" not in st.session_state:
@@ -50,18 +54,33 @@ if "code" in _query_params and not google_auth.is_signed_in():
         st.error(f"Google sign-in failed: {exc}")
 
 # -----------------------------------------------------------------------------
-# 3. AUTHENTICATION GATE
+# 3. AUTHENTICATION GATES
 # -----------------------------------------------------------------------------
-def login_screen():
+def google_signin_screen():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.markdown("## 🦦 AskOtter Portal Access")
-        st.caption("Public Sector AI Assistant — Authenticate to Proceed")
-        
+        st.caption("Public Sector AI Assistant — Sign in with your Google account to continue")
+
+        if not google_auth.is_configured():
+            st.error("Google OAuth is not configured (missing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / REDIRECT_URI).")
+            return
+
+        auth_url = google_auth.get_authorization_url()
+        st.link_button("🔐 Sign in with Google", auth_url, type="primary", use_container_width=True)
+
+
+def login_screen():
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        profile = st.session_state.get("google_profile", {})
+        st.markdown("## 🦦 AskOtter Portal Access")
+        st.caption(f"Signed in as **{profile.get('email', 'Google account')}** — enter the access password to continue")
+
         with st.form("login_form"):
             password_input = st.text_input("Enter Access Password", type="password")
             submit_button = st.form_submit_button("Authenticate", use_container_width=True)
-            
+
             if submit_button:
                 target_password = os.getenv("APP_PASSWORD", "CFS@2027")
                 if password_input == target_password:
@@ -75,7 +94,43 @@ def login_screen():
 def logout():
     st.session_state.authenticated = False
     st.session_state.messages = []
+    st.session_state.memory_index = None
+    st.session_state.memory_index_status = None
+    st.session_state.memory_index_error = None
+    google_auth.sign_out()
     st.rerun()
+
+
+def ensure_index_built():
+    """Fetches the signed-in user's Drive files fresh and builds the index in memory.
+
+    Runs automatically the first time the chat page is opened in this session.
+    Nothing is written to disk: files are downloaded straight into memory, parsed
+    via a temp dir that self-deletes, and the vector index lives only in RAM
+    (session_state) — gone the moment the session ends.
+    """
+    if st.session_state.memory_index_status is not None:
+        return  # already built (or already attempted) this session
+
+    st.session_state.memory_index_status = "building"
+    try:
+        credentials = google_auth.get_credentials()
+        drive_files = drive_sync.list_files(credentials, folder_url=st.session_state.gdrive_url or None)
+        if not drive_files:
+            st.session_state.memory_index_status = "empty"
+            return
+
+        in_memory_files = []
+        for f in drive_files:
+            content, final_name = drive_sync.download_file(credentials, f["id"], f["mimeType"], f["name"])
+            in_memory_files.append((final_name, content))
+
+        index, _chunk_count = rag_engine.build_index_from_memory(in_memory_files)
+        st.session_state.memory_index = index
+        st.session_state.memory_index_status = "ready"
+    except Exception as exc:
+        st.session_state.memory_index_status = "error"
+        st.session_state.memory_index_error = str(exc)
 
 # -----------------------------------------------------------------------------
 # 4. PAGE DEFINITIONS
@@ -87,26 +142,32 @@ def page_ask_otter():
     st.caption("Context-Aware Policy & Document Intelligence System")
     st.divider()
 
+    # Auto-import from Drive + auto-build the index, once per session, in memory only
+    if st.session_state.memory_index_status is None:
+        with st.spinner("Fetching your Google Drive files and building the index..."):
+            ensure_index_built()
+
     # Sidebar Controls
     with st.sidebar:
         st.markdown("### 🛠️ Session Controls")
         if st.button("Clear Conversation", use_container_width=True, type="secondary"):
             st.session_state.messages = []
             st.rerun()
+        if st.button("🔄 Re-sync Google Drive", use_container_width=True, type="secondary"):
+            st.session_state.memory_index = None
+            st.session_state.memory_index_status = None
+            st.session_state.memory_index_error = None
+            st.rerun()
         st.markdown("---")
-        index_ready = rag_engine.has_index()
-        status_label = "Active" if index_ready else "Not built — go to Data Source Settings"
+        status_map = {
+            "building": "Building...",
+            "ready": "Active (in-memory, this session only)",
+            "empty": "No Drive files found",
+            "error": "Failed to build",
+        }
+        status_label = status_map.get(st.session_state.memory_index_status, "Not started")
         st.markdown(f"**Index Status:** `{status_label}`")
         st.markdown("**Model:** `OpenAI gpt-4o-mini / text-embedding-3-large`")
-
-        # Display configured sources
-        if st.session_state.sharepoint_url or st.session_state.gdrive_url:
-            st.markdown("---")
-            st.markdown("### 📂 Data Sources")
-            if st.session_state.sharepoint_url:
-                st.caption(f"📊 SharePoint: `{st.session_state.sharepoint_url[:40]}...`")
-            if st.session_state.gdrive_url:
-                st.caption(f"📁 Google Drive: `{st.session_state.gdrive_url[:40]}...`")
 
     # Display Chat History
     for message in st.session_state.messages:
@@ -118,9 +179,11 @@ def page_ask_otter():
                         st.markdown(f"**[{idx}] {src['title']}** (Page {src['page']})")
                         st.caption(f'"{src["snippet"]}"')
 
-    # Query Input
-    if not rag_engine.has_index():
-        st.info("📂 No documents indexed yet. Go to **Data Source Settings** to upload documents and build the index.")
+    # Query Input status messages
+    if st.session_state.memory_index_status == "empty":
+        st.info("📂 No supported files were found in your Google Drive to index.")
+    elif st.session_state.memory_index_status == "error":
+        st.warning(f"⚠️ Could not build the index from Google Drive: {st.session_state.memory_index_error}")
 
     if prompt := st.chat_input("Ask a question regarding internal documents..."):
         # Store & render user message
@@ -132,7 +195,9 @@ def page_ask_otter():
         with st.chat_message("assistant"):
             with st.spinner("Retrieving relevant passages & generating grounded answer..."):
                 try:
-                    result = rag_engine.query(prompt)
+                    if st.session_state.memory_index is None:
+                        raise ValueError("No index available. Your Google Drive may be empty or the import failed.")
+                    result = rag_engine.query_index(st.session_state.memory_index, prompt)
                     assistant_response = result["answer"]
                     citations = result["sources"]
                 except ValueError as exc:
@@ -250,76 +315,27 @@ def page_settings():
 
     with col2:
         st.markdown("### 📁 Google Drive")
-        st.caption("Sign in with Google — only files you personally have access to will be visible")
+        profile = st.session_state.get("google_profile", {})
+        st.success(f"Signed in as **{profile.get('email', 'Google account')}**")
+        st.caption(
+            "Your Drive files are fetched fresh and indexed automatically in memory each "
+            "time you open the Chat page — nothing is uploaded or saved here. Use "
+            "**🔄 Re-sync Google Drive** on the Chat page to refresh with the latest files."
+        )
 
-        if not google_auth.is_configured():
-            st.error("Google OAuth is not configured (missing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / REDIRECT_URI).")
-        elif not google_auth.is_signed_in():
-            auth_url = google_auth.get_authorization_url()
-            st.link_button("🔐 Sign in with Google", auth_url, type="primary", use_container_width=True)
-        else:
-            profile = st.session_state.get("google_profile", {})
-            st.success(f"Signed in as **{profile.get('email', 'Google account')}**")
-
-            if st.button("Sign out of Google", type="secondary", key="google_signout"):
-                google_auth.sign_out()
-                st.rerun()
-
-            gdrive_input = st.text_input(
-                "Shared Drive folder URL (optional — leave blank to browse recent files)",
-                value=st.session_state.gdrive_url,
-                placeholder="https://drive.google.com/drive/folders/...",
-            )
-            st.session_state.gdrive_url = gdrive_input
-
-            if st.button("📂 List Drive Files", key="list_drive_files"):
-                try:
-                    credentials = google_auth.get_credentials()
-                    files = drive_sync.list_files(credentials, folder_url=gdrive_input or None)
-                    st.session_state["drive_files"] = files
-                    if not files:
-                        st.info("No supported files found (PDF, DOCX, TXT, Google Docs, Google Sheets).")
-                except Exception as exc:
-                    st.error(f"Could not list Drive files: {exc}")
-
-            drive_files = st.session_state.get("drive_files", [])
-            if drive_files:
-                selected_names = st.multiselect(
-                    "Select files to import",
-                    options=[f["name"] for f in drive_files],
-                    key="drive_file_select",
-                )
-                if selected_names and st.button("⬇️ Import Selected Files", type="primary", key="import_drive_files"):
-                    credentials = google_auth.get_credentials()
-                    imported = 0
-                    for f in drive_files:
-                        if f["name"] in selected_names:
-                            try:
-                                content, final_name = drive_sync.download_file(
-                                    credentials, f["id"], f["mimeType"], f["name"]
-                                )
-                                dest = rag_engine.DATA_DIR / final_name
-                                with open(dest, "wb") as out:
-                                    out.write(content)
-                                imported += 1
-                            except Exception as exc:
-                                st.error(f"Failed to import {f['name']}: {exc}")
-                    if imported:
-                        st.success(f"Imported {imported} file(s) from Drive. Rebuild the index below.")
-
-    st.divider()
-    st.markdown("#### 💡 Planned Design (Not Yet Built)")
-    st.caption("""
-    * **User-Based Access**: Documents would be accessed using your own Microsoft 365 or Google account credentials
-    * **OAuth Authentication**: Indexing would prompt you to authenticate with Microsoft or Google
-    * **Secure Tokens**: Access tokens would be stored securely and used only for retrieving documents you own
-    * **No Shared Access**: Each user would authenticate individually — no shared service account
-    """)
+        gdrive_input = st.text_input(
+            "Shared Drive folder URL (optional — leave blank to use all of your Drive)",
+            value=st.session_state.gdrive_url,
+            placeholder="https://drive.google.com/drive/folders/...",
+        )
+        st.session_state.gdrive_url = gdrive_input
 
 # -----------------------------------------------------------------------------
 # 5. NAVIGATION ROUTER & APP ENTRY POINT
 # -----------------------------------------------------------------------------
-if not st.session_state.authenticated:
+if not google_auth.is_signed_in():
+    google_signin_screen()
+elif not st.session_state.authenticated:
     login_screen()
 else:
     # Page Declarations
@@ -337,7 +353,8 @@ else:
 
     # Sidebar User Profile & Logout
     with st.sidebar:
-        st.caption("👤 Logged in as: **Authenticated User**")
+        _profile = st.session_state.get("google_profile", {})
+        st.caption(f"👤 Logged in as: **{_profile.get('email', 'Authenticated User')}**")
         if st.button("Log Out", type="secondary", use_container_width=True):
             logout()
 
