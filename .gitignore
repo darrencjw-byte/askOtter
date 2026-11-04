@@ -51,6 +51,9 @@ __pycache__/
 *.py[cod]
 .streamlit/secrets.toml
 
+# RAG document store & vector index (local, regenerated per deployment)
+.rag_data/
+
 # Next.js files (disabled - using Streamlit instead)
 package.json.backup
 package-lock.json.backup
