@@ -1,6 +1,13 @@
 import os
 import time
 import streamlit as st
+from dotenv import load_dotenv
+
+load_dotenv()
+
+import rag_engine
+import google_auth
+import drive_sync
 
 # -----------------------------------------------------------------------------
 # 1. APPLICATION & PAGE CONFIGURATION
@@ -28,6 +35,19 @@ def init_session_state():
         st.session_state.gdrive_url = os.getenv("GDRIVE_URL", "")
 
 init_session_state()
+
+# -----------------------------------------------------------------------------
+# 2b. GOOGLE OAUTH CALLBACK HANDLING
+# -----------------------------------------------------------------------------
+_query_params = st.query_params
+if "code" in _query_params and not google_auth.is_signed_in():
+    try:
+        profile = google_auth.handle_callback(_query_params["code"])
+        st.session_state["google_profile"] = profile
+        st.query_params.clear()
+        st.rerun()
+    except Exception as exc:
+        st.error(f"Google sign-in failed: {exc}")
 
 # -----------------------------------------------------------------------------
 # 3. AUTHENTICATION GATE
@@ -74,8 +94,10 @@ def page_ask_otter():
             st.session_state.messages = []
             st.rerun()
         st.markdown("---")
-        st.markdown("**Index Status:** `Active (Cloud Sync)`")
-        st.markdown("**Model:** `Azure GPT-4o / Vertex AI`")
+        index_ready = rag_engine.has_index()
+        status_label = "Active" if index_ready else "Not built — go to Data Source Settings"
+        st.markdown(f"**Index Status:** `{status_label}`")
+        st.markdown("**Model:** `OpenAI gpt-4o-mini / text-embedding-3-large`")
 
         # Display configured sources
         if st.session_state.sharepoint_url or st.session_state.gdrive_url:
@@ -97,6 +119,9 @@ def page_ask_otter():
                         st.caption(f'"{src["snippet"]}"')
 
     # Query Input
+    if not rag_engine.has_index():
+        st.info("📂 No documents indexed yet. Go to **Data Source Settings** to upload documents and build the index.")
+
     if prompt := st.chat_input("Ask a question regarding internal documents..."):
         # Store & render user message
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -105,37 +130,30 @@ def page_ask_otter():
 
         # Generate Assistant Response
         with st.chat_message("assistant"):
-            with st.spinner("Analyzing vector database & retrieving citations..."):
-                # Mock RAG response (Replace with LlamaIndex/LangChain query call)
-                time.sleep(1.0)
-                assistant_response = (
-                    f"Based on internal indexed documentation regarding **'{prompt}'**, "
-                    f"agencies must maintain compliance with Section 4.2 of the Governance Framework."
-                )
-                mock_citations = [
-                    {
-                        "title": "Public_Sector_Governance_2026.pdf",
-                        "page": 12,
-                        "snippet": "All deployment repositories must enforce containerized runtime limits and password gating."
-                    },
-                    {
-                        "title": "Cloud_Drive_Ingestion_Policy.docx",
-                        "page": 5,
-                        "snippet": "Vector re-indexing occurs asynchronously upon document modifications."
-                    }
-                ]
+            with st.spinner("Retrieving relevant passages & generating grounded answer..."):
+                try:
+                    result = rag_engine.query(prompt)
+                    assistant_response = result["answer"]
+                    citations = result["sources"]
+                except ValueError as exc:
+                    assistant_response = f"⚠️ {exc}"
+                    citations = []
+                except Exception as exc:
+                    assistant_response = f"⚠️ Could not complete the query: {exc}"
+                    citations = []
 
                 st.markdown(assistant_response)
-                with st.expander("📚 Citation Sources"):
-                    for idx, src in enumerate(mock_citations, 1):
-                        st.markdown(f"**[{idx}] {src['title']}** (Page {src['page']})")
-                        st.caption(f'"{src["snippet"]}"')
+                if citations:
+                    with st.expander("📚 Citation Sources"):
+                        for idx, src in enumerate(citations, 1):
+                            st.markdown(f"**[{idx}] {src['title']}** (Page {src['page']})")
+                            st.caption(f'"{src["snippet"]}"')
 
         # Store Assistant Message
         st.session_state.messages.append({
             "role": "assistant",
             "content": assistant_response,
-            "sources": mock_citations
+            "sources": citations
         })
 
 # PAGE 2: ABOUT US
@@ -187,77 +205,115 @@ def page_methodology():
 # PAGE 4: SETTINGS
 def page_settings():
     st.title("⚙️ Data Source Configuration")
-    st.caption("Connect your SharePoint or Google Drive folders using your own credentials")
+    st.caption("Upload documents to index, or connect a cloud folder")
     st.divider()
+
+    st.markdown("### 📄 Document Upload & Indexing")
+    st.caption("Upload PDF, DOCX, or TXT files — this builds the real vector index used by the chat assistant")
+
+    uploaded_files = st.file_uploader(
+        "Upload documents",
+        type=["pdf", "docx", "txt", "md"],
+        accept_multiple_files=True,
+    )
+    if uploaded_files and st.button("Save Uploaded Files", type="primary", key="save_uploads"):
+        count = rag_engine.save_uploaded_files(uploaded_files)
+        st.success(f"Saved {count} file(s) to the document store")
+
+    existing_docs = rag_engine.list_documents()
+    if existing_docs:
+        st.markdown(f"**Documents in store ({len(existing_docs)}):**")
+        for doc in existing_docs:
+            st.caption(f"📄 {doc}")
+
+        if st.button("🔄 Build / Rebuild Index", type="primary", key="build_index"):
+            with st.spinner("Chunking, embedding, and writing to Qdrant..."):
+                try:
+                    chunk_count = rag_engine.build_index()
+                    st.success(f"Index built successfully — {chunk_count} chunks indexed")
+                except Exception as exc:
+                    st.error(f"Indexing failed: {exc}")
+    else:
+        st.caption("No documents uploaded yet.")
+
+    st.divider()
+    st.markdown("### ☁️ Cloud Folder Sync")
 
     col1, col2 = st.columns(2)
 
     with col1:
         st.markdown("### 📊 SharePoint Configuration")
-        st.caption("Access documents from your Microsoft 365 account")
-
-        sharepoint_input = st.text_input(
-            "SharePoint Folder URL",
-            value=st.session_state.sharepoint_url,
-            placeholder="https://yourorg.sharepoint.com/sites/...",
-            help="Enter the SharePoint folder URL you have access to"
+        st.warning(
+            "⚠️ **Not yet connected.** SharePoint sync requires a WOG AD / Entra ID app "
+            "registration with admin consent — not available in this environment yet."
         )
-
-        if st.button("Save SharePoint URL", type="primary", key="save_sp"):
-            st.session_state.sharepoint_url = sharepoint_input
-            st.success("SharePoint URL saved successfully")
-            time.sleep(0.5)
-            st.rerun()
-
-        if st.session_state.sharepoint_url:
-            st.info(f"**Current URL:**\n\n`{st.session_state.sharepoint_url}`")
-            st.warning("⚠️ Authentication required: You will need to authenticate with your Microsoft 365 account to access these files")
-
-        if st.button("Clear SharePoint URL", type="secondary", key="clear_sp"):
-            st.session_state.sharepoint_url = ""
-            st.rerun()
 
     with col2:
-        st.markdown("### 📁 Google Drive Configuration")
-        st.caption("Access documents from your Google account")
+        st.markdown("### 📁 Google Drive")
+        st.caption("Sign in with Google — only files you personally have access to will be visible")
 
-        gdrive_input = st.text_input(
-            "Google Drive Folder URL",
-            value=st.session_state.gdrive_url,
-            placeholder="https://drive.google.com/drive/folders/...",
-            help="Enter the Google Drive folder URL you have access to"
-        )
+        if not google_auth.is_configured():
+            st.error("Google OAuth is not configured (missing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / REDIRECT_URI).")
+        elif not google_auth.is_signed_in():
+            auth_url = google_auth.get_authorization_url()
+            st.link_button("🔐 Sign in with Google", auth_url, type="primary", use_container_width=True)
+        else:
+            profile = st.session_state.get("google_profile", {})
+            st.success(f"Signed in as **{profile.get('email', 'Google account')}**")
 
-        if st.button("Save Google Drive URL", type="primary", key="save_gd"):
+            if st.button("Sign out of Google", type="secondary", key="google_signout"):
+                google_auth.sign_out()
+                st.rerun()
+
+            gdrive_input = st.text_input(
+                "Shared Drive folder URL (optional — leave blank to browse recent files)",
+                value=st.session_state.gdrive_url,
+                placeholder="https://drive.google.com/drive/folders/...",
+            )
             st.session_state.gdrive_url = gdrive_input
-            st.success("Google Drive URL saved successfully")
-            time.sleep(0.5)
-            st.rerun()
 
-        if st.session_state.gdrive_url:
-            st.info(f"**Current URL:**\n\n`{st.session_state.gdrive_url}`")
-            st.warning("⚠️ Authentication required: You will need to authenticate with your Google account to access these files")
+            if st.button("📂 List Drive Files", key="list_drive_files"):
+                try:
+                    credentials = google_auth.get_credentials()
+                    files = drive_sync.list_files(credentials, folder_url=gdrive_input or None)
+                    st.session_state["drive_files"] = files
+                    if not files:
+                        st.info("No supported files found (PDF, DOCX, TXT, Google Docs, Google Sheets).")
+                except Exception as exc:
+                    st.error(f"Could not list Drive files: {exc}")
 
-        if st.button("Clear Google Drive URL", type="secondary", key="clear_gd"):
-            st.session_state.gdrive_url = ""
-            st.rerun()
+            drive_files = st.session_state.get("drive_files", [])
+            if drive_files:
+                selected_names = st.multiselect(
+                    "Select files to import",
+                    options=[f["name"] for f in drive_files],
+                    key="drive_file_select",
+                )
+                if selected_names and st.button("⬇️ Import Selected Files", type="primary", key="import_drive_files"):
+                    credentials = google_auth.get_credentials()
+                    imported = 0
+                    for f in drive_files:
+                        if f["name"] in selected_names:
+                            try:
+                                content, final_name = drive_sync.download_file(
+                                    credentials, f["id"], f["mimeType"], f["name"]
+                                )
+                                dest = rag_engine.DATA_DIR / final_name
+                                with open(dest, "wb") as out:
+                                    out.write(content)
+                                imported += 1
+                            except Exception as exc:
+                                st.error(f"Failed to import {f['name']}: {exc}")
+                    if imported:
+                        st.success(f"Imported {imported} file(s) from Drive. Rebuild the index below.")
 
     st.divider()
-    st.markdown("#### 💡 How It Works")
-    st.markdown("""
-    * **User-Based Access**: Documents are accessed using your own Microsoft 365 or Google account credentials
-    * **Personal Permissions**: You can only access folders and files you personally have permission to view
-    * **OAuth Authentication**: When indexing starts, you will be prompted to authenticate with Microsoft or Google
-    * **Secure Tokens**: Your access tokens are stored securely and used only for retrieving documents you own
-    * **No Shared Access**: Each user authenticates individually — no shared service account
-    """)
-
-    st.markdown("#### 🔐 Privacy & Security")
-    st.success("""
-    ✓ Your credentials are never stored in plain text
-    ✓ Only you can access your own files
-    ✓ OAuth tokens expire and require re-authentication
-    ✓ No cross-user data access
+    st.markdown("#### 💡 Planned Design (Not Yet Built)")
+    st.caption("""
+    * **User-Based Access**: Documents would be accessed using your own Microsoft 365 or Google account credentials
+    * **OAuth Authentication**: Indexing would prompt you to authenticate with Microsoft or Google
+    * **Secure Tokens**: Access tokens would be stored securely and used only for retrieving documents you own
+    * **No Shared Access**: Each user would authenticate individually — no shared service account
     """)
 
 # -----------------------------------------------------------------------------
