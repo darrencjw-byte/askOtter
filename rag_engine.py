@@ -1,5 +1,6 @@
 """Real RAG pipeline: document ingestion, Qdrant vector storage, LlamaIndex retrieval."""
 import os
+import tempfile
 from pathlib import Path
 
 from llama_index.core import Settings, SimpleDirectoryReader, StorageContext, VectorStoreIndex
@@ -68,6 +69,60 @@ def build_index() -> int:
     index = VectorStoreIndex(nodes, storage_context=storage_context)
 
     return len(nodes)
+
+
+def build_index_from_memory(files: list[tuple[str, bytes]]):
+    """Builds an in-memory (non-persisted) vector index from in-memory file bytes.
+
+    Used for the Google Drive auto-import flow: nothing here touches disk except a
+    temp dir that is deleted immediately after parsing, and the Qdrant collection
+    lives only in RAM for the lifetime of this session — never written to QDRANT_PATH.
+    Returns the VectorStoreIndex object itself; caller keeps it in session state.
+    """
+    if not files:
+        raise ValueError("No Drive files were found to import.")
+
+    _configure_models()
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_paths = []
+        for name, content in files:
+            dest = Path(tmp_dir) / name
+            with open(dest, "wb") as out:
+                out.write(content)
+            tmp_paths.append(str(dest))
+
+        documents = SimpleDirectoryReader(input_files=tmp_paths).load_data()
+
+    client = QdrantClient(location=":memory:")
+    vector_store = QdrantVectorStore(client=client, collection_name=COLLECTION_NAME)
+    storage_context = StorageContext.from_defaults(vector_store=vector_store)
+    nodes = Settings.node_parser.get_nodes_from_documents(documents)
+    index = VectorStoreIndex(nodes, storage_context=storage_context)
+
+    return index, len(nodes)
+
+
+def query_index(index, question: str, top_k: int = 4) -> dict:
+    """Runs a grounded query against an in-memory index (see build_index_from_memory)."""
+    _configure_models()
+    query_engine = index.as_query_engine(similarity_top_k=top_k)
+
+    response = query_engine.query(question)
+
+    sources = []
+    for node in response.source_nodes:
+        metadata = node.node.metadata or {}
+        sources.append(
+            {
+                "title": metadata.get("file_name", "Unknown document"),
+                "page": metadata.get("page_label", "—"),
+                "snippet": node.node.get_content()[:280].strip().replace("\n", " "),
+                "score": round(node.score, 3) if node.score is not None else None,
+            }
+        )
+
+    return {"answer": str(response), "sources": sources}
 
 
 def query(question: str, top_k: int = 4) -> dict:
