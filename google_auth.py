@@ -68,9 +68,14 @@ def handle_callback(code: str) -> dict:
         "scopes": creds.scopes,
     }
 
+    import httplib2
+    from google_auth_httplib2 import AuthorizedHttp
     from googleapiclient.discovery import build
 
-    oauth2_service = build("oauth2", "v2", credentials=creds)
+    # No default network timeout on the Google API client — set one explicitly
+    # so a stalled request fails fast instead of hanging the sign-in flow.
+    authed_http = AuthorizedHttp(creds, http=httplib2.Http(timeout=20))
+    oauth2_service = build("oauth2", "v2", http=authed_http)
     profile = oauth2_service.userinfo().get().execute()
     return profile
 
