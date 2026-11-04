@@ -65,20 +65,30 @@ if "_cookie_restore_attempted" not in st.session_state:
 # -----------------------------------------------------------------------------
 # 2b. GOOGLE OAUTH CALLBACK HANDLING
 # -----------------------------------------------------------------------------
+# Google's authorization code is single-use. Streamlit reruns this script on
+# every interaction, and the ?code=... stays in the URL until explicitly
+# cleared — so without the guards below, a widget interaction (or a retry
+# after a transient error) while the code is still in the URL re-submits the
+# same already-consumed code and Google correctly rejects it as
+# invalid_grant. Clear the query param immediately (before the network call)
+# and remember the last code processed so a rerun can never resend it.
 _query_params = st.query_params
-if "code" in _query_params and not google_auth.is_signed_in():
+_oauth_code = _query_params.get("code")
+if _oauth_code and not google_auth.is_signed_in() and st.session_state.get("_last_oauth_code") != _oauth_code:
+    st.session_state["_last_oauth_code"] = _oauth_code
+    st.query_params.clear()
     try:
-        profile = google_auth.handle_callback(_query_params["code"])
+        profile = google_auth.handle_callback(_oauth_code)
         st.session_state["google_profile"] = profile
         cookie_auth.save_session({
             "google_credentials": st.session_state["google_credentials"],
             "google_profile": profile,
             "authenticated": st.session_state.get("authenticated", False),
         })
-        st.query_params.clear()
         st.rerun()
     except Exception as exc:
         st.error(f"Google sign-in failed: {exc}")
+        st.info("Please click **Sign in with Google** again to retry.")
 
 # -----------------------------------------------------------------------------
 # 3. AUTHENTICATION GATES
