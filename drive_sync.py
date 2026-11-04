@@ -1,8 +1,20 @@
 """Lists and downloads files from the signed-in user's Google Drive (delegated, per-user scoped)."""
 import io
 
+import httplib2
+from google_auth_httplib2 import AuthorizedHttp
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
+
+# The Google API client has no default network timeout — a stalled request can hang
+# forever instead of raising. Build every service over an AuthorizedHttp with an
+# explicit timeout so a slow/unreachable API fails fast with a catchable error.
+REQUEST_TIMEOUT_SECONDS = 20
+
+
+def _build_service(name: str, version: str, credentials):
+    authed_http = AuthorizedHttp(credentials, http=httplib2.Http(timeout=REQUEST_TIMEOUT_SECONDS))
+    return build(name, version, http=authed_http)
 
 EXPORT_MIME_MAP = {
     "application/vnd.google-apps.document": ("application/pdf", ".pdf"),
@@ -27,7 +39,7 @@ def list_files(credentials, folder_url: str | None = None, page_size: int = 50) 
     If folder_url is given, lists only that folder's contents (folder ID parsed from the URL).
     Otherwise lists files across the user's Drive (My Drive + Shared Drives they belong to).
     """
-    service = build("drive", "v3", credentials=credentials)
+    service = _build_service("drive", "v3", credentials)
 
     mime_filter = " or ".join(f"mimeType='{m}'" for m in SUPPORTED_MIME_TYPES)
     query_parts = [f"({mime_filter})", "trashed=false"]
@@ -61,7 +73,7 @@ def _extract_folder_id(folder_url: str) -> str | None:
 
 def download_file(credentials, file_id: str, mime_type: str, file_name: str) -> tuple[bytes, str]:
     """Downloads (or exports, for Google Docs/Sheets) a file. Returns (content_bytes, final_name)."""
-    service = build("drive", "v3", credentials=credentials)
+    service = _build_service("drive", "v3", credentials)
 
     if mime_type in EXPORT_MIME_MAP:
         export_mime, suffix = EXPORT_MIME_MAP[mime_type]
