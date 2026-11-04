@@ -40,12 +40,19 @@ def get_authorization_url() -> str:
         prompt="consent",
     )
     st.session_state["oauth_state"] = state
+    st.session_state["oauth_code_verifier"] = flow.code_verifier
     return auth_url
 
 
 def handle_callback(code: str) -> dict:
     """Exchanges the auth code for tokens and returns the signed-in user's profile."""
-    flow = Flow.from_client_config(_client_config(), scopes=SCOPES, redirect_uri=_redirect_uri())
+    flow = Flow.from_client_config(
+        _client_config(),
+        scopes=SCOPES,
+        redirect_uri=_redirect_uri(),
+        code_verifier=st.session_state.get("oauth_code_verifier"),
+        autogenerate_code_verifier=False,
+    )
     flow.fetch_token(code=code)
     creds = flow.credentials
 
