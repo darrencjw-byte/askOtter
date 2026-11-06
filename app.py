@@ -110,7 +110,7 @@ def google_signin_screen():
         # Render a plain same-tab link instead so the redirect returns to this tab.
         st.markdown(
             f"""
-            <a href="{auth_url}" target="_self" style="
+            <a href="{auth_url}" target="_top" style="
                 display: block; text-align: center; text-decoration: none;
                 background-color: #FF4B4B; color: white; font-weight: 600;
                 padding: 0.6rem 1rem; border-radius: 0.5rem; width: 100%;
