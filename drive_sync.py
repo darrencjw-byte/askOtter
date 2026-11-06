@@ -71,9 +71,10 @@ def _extract_folder_id(folder_url: str) -> str | None:
     return None
 
 
-def download_file(credentials, file_id: str, mime_type: str, file_name: str) -> tuple[bytes, str]:
+def download_file(credentials, file_id: str, mime_type: str, file_name: str, service=None) -> tuple[bytes, str]:
     """Downloads (or exports, for Google Docs/Sheets) a file. Returns (content_bytes, final_name)."""
-    service = _build_service("drive", "v3", credentials)
+    if service is None:
+        service = _build_service("drive", "v3", credentials)
 
     if mime_type in EXPORT_MIME_MAP:
         export_mime, suffix = EXPORT_MIME_MAP[mime_type]

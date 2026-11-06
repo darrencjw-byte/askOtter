@@ -163,9 +163,10 @@ def ensure_index_built():
             st.session_state.memory_index_status = "empty"
             return
 
+        service = drive_sync._build_service("drive", "v3", credentials)
         in_memory_files = []
         for f in drive_files:
-            content, final_name = drive_sync.download_file(credentials, f["id"], f["mimeType"], f["name"])
+            content, final_name = drive_sync.download_file(credentials, f["id"], f["mimeType"], f["name"], service=service)
             in_memory_files.append((final_name, content))
 
         index, _chunk_count = rag_engine.build_index_from_memory(in_memory_files)
