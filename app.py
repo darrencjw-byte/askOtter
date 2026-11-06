@@ -1,7 +1,6 @@
 import os
 import time
 import streamlit as st
-import streamlit.components.v1 as components
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -106,9 +105,8 @@ def google_signin_screen():
 
         auth_url = google_auth.get_authorization_url()
         if st.button("🔐 Sign in with Google", use_container_width=True):
-            components.html(
-                f"""<script>window.open("{auth_url}", "_self");</script>""",
-                height=0,
+            st.html(
+                f"""<script>window.open("{auth_url}", "_self");</script>"""
             )
 
 
