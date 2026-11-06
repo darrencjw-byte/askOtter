@@ -157,8 +157,14 @@ def ensure_index_built():
 
     st.session_state.memory_index_status = "building"
     try:
+        import logging
+        logging.basicConfig(level=logging.INFO)
+        logger = logging.getLogger("askotter")
+
+        logger.info("Starting Drive sync...")
         credentials = google_auth.get_credentials()
         drive_files = drive_sync.list_files(credentials, folder_url=st.session_state.gdrive_url or None)
+        logger.info(f"Found {len(drive_files)} files in Drive")
         if not drive_files:
             st.session_state.memory_index_status = "empty"
             return
@@ -166,10 +172,13 @@ def ensure_index_built():
         service = drive_sync._build_service("drive", "v3", credentials)
         in_memory_files = []
         for f in drive_files:
+            logger.info(f"Downloading: {f['name']}")
             content, final_name = drive_sync.download_file(credentials, f["id"], f["mimeType"], f["name"], service=service)
             in_memory_files.append((final_name, content))
 
+        logger.info("Building vector index...")
         index, _chunk_count = rag_engine.build_index_from_memory(in_memory_files)
+        logger.info(f"Index built: {_chunk_count} chunks")
         st.session_state.memory_index = index
         st.session_state.memory_index_status = "ready"
     except Exception as exc:

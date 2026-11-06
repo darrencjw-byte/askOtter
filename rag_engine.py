@@ -3,10 +3,12 @@ import os
 import tempfile
 from pathlib import Path
 
-import nltk
 _nltk_data_dir = os.path.join(os.path.expanduser("~"), "nltk_data")
 os.makedirs(_nltk_data_dir, exist_ok=True)
-nltk.data.path.insert(0, _nltk_data_dir)
+os.environ["NLTK_DATA"] = _nltk_data_dir
+
+import nltk
+nltk.data.path = [_nltk_data_dir]
 nltk.download("stopwords", download_dir=_nltk_data_dir, quiet=True)
 nltk.download("punkt_tab", download_dir=_nltk_data_dir, quiet=True)
 
