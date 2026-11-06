@@ -10,12 +10,15 @@ from llama_index.llms.openai import OpenAI
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 
-DATA_DIR = Path("/workspace/.rag_data/documents")
-QDRANT_PATH = "/workspace/.rag_data/qdrant"
+_rag_root = Path(tempfile.gettempdir()) / ".rag_data"
+DATA_DIR = _rag_root / "documents"
+QDRANT_PATH = str(_rag_root / "qdrant")
 COLLECTION_NAME = "ask_otter_docs"
 
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-Path(QDRANT_PATH).mkdir(parents=True, exist_ok=True)
+
+def _ensure_dirs():
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    Path(QDRANT_PATH).mkdir(parents=True, exist_ok=True)
 
 
 def _configure_models():
@@ -32,6 +35,7 @@ def _get_vector_store() -> QdrantVectorStore:
 
 def save_uploaded_files(uploaded_files) -> int:
     """Write Streamlit UploadedFile objects to the documents folder. Returns count saved."""
+    _ensure_dirs()
     count = 0
     for f in uploaded_files:
         dest = DATA_DIR / f.name
@@ -42,15 +46,18 @@ def save_uploaded_files(uploaded_files) -> int:
 
 
 def list_documents() -> list[str]:
+    _ensure_dirs()
     return sorted(p.name for p in DATA_DIR.glob("*") if p.is_file())
 
 
 def has_index() -> bool:
+    _ensure_dirs()
     return QdrantClient(path=QDRANT_PATH).collection_exists(COLLECTION_NAME)
 
 
 def build_index() -> int:
     """(Re)builds the vector index from every file currently in DATA_DIR. Returns chunk count."""
+    _ensure_dirs()
     _configure_models()
 
     files = [str(p) for p in DATA_DIR.glob("*") if p.is_file()]
