@@ -3,6 +3,10 @@ import os
 import tempfile
 from pathlib import Path
 
+import nltk
+nltk.download("stopwords", quiet=True)
+nltk.download("punkt_tab", quiet=True)
+
 from llama_index.core import Settings, SimpleDirectoryReader, StorageContext, VectorStoreIndex
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.openai import OpenAIEmbedding
