@@ -1,15 +1,8 @@
 """Browser-side session persistence (no server storage).
 
-Keeps the Google sign-in + password-gate state in an encrypted browser cookie
-instead of only in `st.session_state`. `st.session_state` lives in one server
-process's RAM — if that process restarts, or a later request lands on a
-different replica, the in-memory state is gone and the user is bounced back
-to the sign-in screen even though nothing actually went wrong on their end.
-
-The cookie value is encrypted (Fernet) with a key derived from server-side
-secrets that already exist (GOOGLE_CLIENT_SECRET + APP_PASSWORD) — nothing
-new to configure, and nothing is written to disk or a database on the
-server. The browser is the only place this state is stored.
+Uses st.context.cookies (read-only) for loading and JavaScript injection
+for setting cookies, replacing the extra_streamlit_components dependency
+which has compatibility issues on newer Python versions.
 """
 import base64
 import hashlib
@@ -17,8 +10,8 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 
+import streamlit as st
 from cryptography.fernet import Fernet, InvalidToken
-import extra_streamlit_components as stx
 
 COOKIE_NAME = "askotter_session"
 COOKIE_MAX_AGE_DAYS = 7
@@ -30,30 +23,25 @@ def _fernet() -> Fernet:
     return Fernet(key)
 
 
-def _get_manager() -> stx.CookieManager:
-    import streamlit as st
-
-    if "_cookie_manager" not in st.session_state:
-        st.session_state["_cookie_manager"] = stx.CookieManager(key="askotter_cookie_manager")
-    return st.session_state["_cookie_manager"]
-
-
 def save_session(data: dict) -> None:
-    """Encrypts and writes session data to the browser cookie."""
-    manager = _get_manager()
+    """Encrypts and writes session data to a browser cookie via JavaScript."""
     token = _fernet().encrypt(json.dumps(data).encode()).decode()
-    manager.set(
-        COOKIE_NAME,
-        token,
-        expires_at=datetime.now(timezone.utc) + timedelta(days=COOKIE_MAX_AGE_DAYS),
-        key="askotter_session_set",
-    )
+    max_age = COOKIE_MAX_AGE_DAYS * 86400
+    js = f"""
+    <script>
+    document.cookie = "{COOKIE_NAME}={token}; path=/; max-age={max_age}; SameSite=Lax; Secure";
+    </script>
+    """
+    st.html(js)
 
 
 def load_session() -> dict | None:
-    """Reads and decrypts the browser cookie. Returns None if absent/invalid/corrupt."""
-    manager = _get_manager()
-    raw = manager.get(COOKIE_NAME)
+    """Reads and decrypts the session cookie. Returns None if absent/invalid."""
+    try:
+        cookies = st.context.cookies
+        raw = cookies.get(COOKIE_NAME)
+    except Exception:
+        return None
     if not raw:
         return None
     try:
@@ -63,8 +51,9 @@ def load_session() -> dict | None:
 
 
 def clear_session() -> None:
-    manager = _get_manager()
-    try:
-        manager.delete(COOKIE_NAME, key="askotter_session_delete")
-    except KeyError:
-        pass
+    js = f"""
+    <script>
+    document.cookie = "{COOKIE_NAME}=; path=/; max-age=0; SameSite=Lax; Secure";
+    </script>
+    """
+    st.html(js)
