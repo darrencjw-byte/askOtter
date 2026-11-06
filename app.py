@@ -104,10 +104,7 @@ def google_signin_screen():
             return
 
         auth_url = google_auth.get_authorization_url()
-        if st.button("🔐 Sign in with Google", use_container_width=True):
-            st.html(
-                f"""<script>window.open("{auth_url}", "_self");</script>"""
-            )
+        st.link_button("🔐 Sign in with Google", auth_url, use_container_width=True)
 
 
 def login_screen():
