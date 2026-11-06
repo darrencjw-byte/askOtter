@@ -7,10 +7,17 @@ _nltk_data_dir = os.path.join(os.path.expanduser("~"), "nltk_data")
 os.makedirs(_nltk_data_dir, exist_ok=True)
 os.environ["NLTK_DATA"] = _nltk_data_dir
 
-import nltk
-nltk.data.path = [_nltk_data_dir]
-nltk.download("stopwords", download_dir=_nltk_data_dir, quiet=True)
-nltk.download("punkt_tab", download_dir=_nltk_data_dir, quiet=True)
+_nltk_ready = False
+
+def _ensure_nltk():
+    global _nltk_ready
+    if _nltk_ready:
+        return
+    import nltk
+    nltk.data.path = [_nltk_data_dir]
+    nltk.download("stopwords", download_dir=_nltk_data_dir, quiet=True)
+    nltk.download("punkt_tab", download_dir=_nltk_data_dir, quiet=True)
+    _nltk_ready = True
 
 from llama_index.core import Settings, SimpleDirectoryReader, StorageContext, VectorStoreIndex
 from llama_index.core.node_parser import SentenceSplitter
@@ -66,6 +73,7 @@ def has_index() -> bool:
 
 def build_index() -> int:
     """(Re)builds the vector index from every file currently in DATA_DIR. Returns chunk count."""
+    _ensure_nltk()
     _ensure_dirs()
     _configure_models()
 
@@ -88,13 +96,8 @@ def build_index() -> int:
 
 
 def build_index_from_memory(files: list[tuple[str, bytes]]):
-    """Builds an in-memory (non-persisted) vector index from in-memory file bytes.
-
-    Used for the Google Drive auto-import flow: nothing here touches disk except a
-    temp dir that is deleted immediately after parsing, and the Qdrant collection
-    lives only in RAM for the lifetime of this session — never written to QDRANT_PATH.
-    Returns the VectorStoreIndex object itself; caller keeps it in session state.
-    """
+    """Builds an in-memory (non-persisted) vector index from in-memory file bytes."""
+    _ensure_nltk()
     if not files:
         raise ValueError("No Drive files were found to import.")
 
