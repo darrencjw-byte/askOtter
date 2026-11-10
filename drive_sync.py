@@ -33,7 +33,7 @@ SUPPORTED_MIME_TYPES = [
 ]
 
 
-def list_files(credentials, folder_url: str | None = None, page_size: int = 50) -> list[dict]:
+def list_files(credentials, folder_url: str | None = None, page_size: int = 20) -> list[dict]:
     """Lists files visible to the signed-in user — restricted to supported document types.
 
     If folder_url is given, lists only that folder's contents (folder ID parsed from the URL).

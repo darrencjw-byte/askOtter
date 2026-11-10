@@ -66,7 +66,7 @@ def _configure_models():
         raise ValueError("OPENAI_API_KEY is not set.")
     Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small", api_key=api_key, timeout=60, max_retries=2)
     Settings.llm = OpenAI(model="gpt-4o-mini", api_key=api_key, timeout=60, max_retries=2)
-    Settings.node_parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
+    Settings.node_parser = SentenceSplitter(chunk_size=1024, chunk_overlap=100)
 
 
 def _get_vector_store() -> QdrantVectorStore:
