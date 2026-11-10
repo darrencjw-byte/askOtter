@@ -152,19 +152,14 @@ def ensure_index_built():
     via a temp dir that self-deletes, and the vector index lives only in RAM
     (session_state) — gone the moment the session ends.
     """
-    if st.session_state.memory_index_status is not None:
-        return  # already built (or already attempted) this session
+    status = st.session_state.memory_index_status
+    if status is not None and status != "building":
+        return  # already completed (or failed) this session
 
     st.session_state.memory_index_status = "building"
     try:
-        import logging
-        logging.basicConfig(level=logging.INFO)
-        logger = logging.getLogger("askotter")
-
-        logger.info("Starting Drive sync...")
         credentials = google_auth.get_credentials()
         drive_files = drive_sync.list_files(credentials, folder_url=st.session_state.gdrive_url or None)
-        logger.info(f"Found {len(drive_files)} files in Drive")
         if not drive_files:
             st.session_state.memory_index_status = "empty"
             return
@@ -172,13 +167,10 @@ def ensure_index_built():
         service = drive_sync._build_service("drive", "v3", credentials)
         in_memory_files = []
         for f in drive_files:
-            logger.info(f"Downloading: {f['name']}")
             content, final_name = drive_sync.download_file(credentials, f["id"], f["mimeType"], f["name"], service=service)
             in_memory_files.append((final_name, content))
 
-        logger.info("Building vector index...")
         index, _chunk_count = rag_engine.build_index_from_memory(in_memory_files)
-        logger.info(f"Index built: {_chunk_count} chunks")
         st.session_state.memory_index = index
         st.session_state.memory_index_status = "ready"
     except Exception as exc:
@@ -377,8 +369,8 @@ def page_about_us():
     with col2:
         st.info("""
         #### Key Metadata
-        * **Repo Slug:** `ask-otter`
-        * **Deployment Runtime:** RabbitDeploy (Docker / Streamlit Engine)
+        * **Repo Slug:** `askOtter`
+        * **Deployment Runtime:** Streamlit Community Cloud
         * **Submission Portal:** LaunchPad
         * **Target Grading Focus:** Session State, Prompt Engineering, Agent Tools (25% Weightage)
         """)
@@ -390,20 +382,28 @@ def page_methodology():
 
     st.markdown("""
     #### 1. End-to-End Data Flow
-    1. **Ingestion Layer**: Document loaders pull `.pdf`, `.docx`, and `.xlsx` files from designated SharePoint / Google Drive folders.
-    2. **Vector Indexing**: Documents are parsed into overlap chunks and converted to vector embeddings using `text-embedding-3-large`.
-    3. **Query Engine**: Streamlit passes user queries to LlamaIndex retriever, extracting top-$k$ relevant passages based on cosine similarity.
-    4. **Prompt Guard**: Query and retrieved context are merged into a strictly constrained system prompt before invoking the LLM.
+    1. **Ingestion Layer**: On each session start, the signed-in user's Google Drive files (`.pdf`, `.docx`, `.xlsx`) are fetched via the Google Drive API and loaded into memory.
+    2. **Vector Indexing**: Documents are parsed into overlapping chunks and converted to vector embeddings using OpenAI `text-embedding-3-large`. The index lives entirely in RAM (Qdrant in-memory) — nothing is written to disk.
+    3. **Query Engine**: Streamlit passes user queries to the LlamaIndex retriever, extracting the top-*k* relevant passages based on cosine similarity.
+    4. **Grounded Synthesis**: Retrieved context and the user query are merged into a constrained system prompt before invoking OpenAI `gpt-4o-mini` for answer generation with source citations.
     """)
 
     st.markdown("#### 2. Process Architecture")
     st.code("""
-[ Cloud Drive ] ---> [ Chunking & Embeddings ] ---> [ Vector Database ]
-                                                            |
-[ User Query ] ---> [ Streamlit Auth Gate ] ---> [ Vector Retriever ]
-                                                            |
-[ Grounded Answer + Citations ] <--- [ LLM Synthesis ] <----+
+[ Google Drive API ] ---> [ In-Memory Chunking & Embeddings ] ---> [ Qdrant In-Memory ]
+                                                                          |
+[ User Query ] -------> [ Google OAuth + Password Gate ] -------> [ Vector Retriever ]
+                                                                          |
+[ Grounded Answer + Citations ] <---------- [ LLM Synthesis ] <-----------+
     """, language="text")
+
+    st.markdown("""
+    #### 3. Key Design Decisions
+    * **Fully in-memory**: No persistent vector database — the index is rebuilt fresh each session from the user's own Drive, ensuring data is always up to date and nothing is stored server-side.
+    * **Per-user scoping**: Each user's Google OAuth credentials scope access to only their own Drive files.
+    * **Session cookie persistence**: Encrypted browser cookies (Fernet) restore sign-in state across page reloads without server-side storage.
+    * **Deployed on Streamlit Community Cloud**: Zero-infrastructure hosting with automatic redeployment from GitHub.
+    """)
 
 # PAGE 4: SETTINGS
 def page_settings():
