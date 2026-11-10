@@ -1,18 +1,46 @@
 """Real RAG pipeline: document ingestion, Qdrant vector storage, LlamaIndex retrieval."""
 import os
+import stat
 import tempfile
 from pathlib import Path
 
 _nltk_ready = False
 
 def _ensure_nltk():
+    """Download NLTK data to a private directory with correct permissions for Python 3.14."""
     global _nltk_ready
     if _nltk_ready:
         return
     import nltk
-    nltk.download("stopwords", quiet=True)
-    nltk.download("punkt_tab", quiet=True)
+
+    nltk_dir = os.path.join(tempfile.gettempdir(), "nltk_private")
+    os.makedirs(nltk_dir, exist_ok=True)
+    try:
+        os.chmod(nltk_dir, stat.S_IRWXU)
+    except OSError:
+        pass
+
+    os.environ["NLTK_DATA"] = nltk_dir
+    nltk.data.path = [nltk_dir]
+
+    nltk.download("stopwords", download_dir=nltk_dir, quiet=True)
+    nltk.download("punkt_tab", download_dir=nltk_dir, quiet=True)
+
+    for root, dirs, _files in os.walk(nltk_dir):
+        try:
+            os.chmod(root, stat.S_IRWXU)
+        except OSError:
+            pass
+        for fn in _files:
+            try:
+                os.chmod(os.path.join(root, fn), stat.S_IRUSR | stat.S_IWUSR)
+            except OSError:
+                pass
     _nltk_ready = True
+
+# Override LlamaIndex's internal NLTK cache path BEFORE importing it
+_llama_nltk_cache = os.path.join(tempfile.gettempdir(), "nltk_private")
+os.environ["NLTK_DATA"] = _llama_nltk_cache
 
 from llama_index.core import Settings, SimpleDirectoryReader, StorageContext, VectorStoreIndex
 from llama_index.core.node_parser import SentenceSplitter
