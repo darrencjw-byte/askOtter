@@ -275,7 +275,7 @@ def page_ask_otter():
         }
         status_label = status_map.get(st.session_state.memory_index_status, "Not started")
         st.markdown(f"**Index Status:** `{status_label}`")
-        st.markdown("**Model:** `OpenAI gpt-4o-mini / text-embedding-3-large`")
+        st.markdown("**Model:** `OpenAI gpt-4o-mini / text-embedding-3-small`")
 
     has_history = len(st.session_state.messages) > 0
 
@@ -398,7 +398,7 @@ def page_methodology():
     st.markdown("""
     #### 1. End-to-End Data Flow
     1. **Ingestion Layer**: On each session start, the signed-in user's Google Drive files (`.pdf`, `.docx`, `.xlsx`) are fetched via the Google Drive API and loaded into memory.
-    2. **Vector Indexing**: Documents are parsed into overlapping chunks and converted to vector embeddings using OpenAI `text-embedding-3-large`. The index lives entirely in RAM (Qdrant in-memory) — nothing is written to disk.
+    2. **Vector Indexing**: Documents are parsed into overlapping chunks and converted to vector embeddings using OpenAI `text-embedding-3-small`. The index lives entirely in RAM (Qdrant in-memory) — nothing is written to disk.
     3. **Query Engine**: Streamlit passes user queries to the LlamaIndex retriever, extracting the top-*k* relevant passages based on cosine similarity.
     4. **Grounded Synthesis**: Retrieved context and the user query are merged into a constrained system prompt before invoking OpenAI `gpt-4o-mini` for answer generation with source citations.
     """)
