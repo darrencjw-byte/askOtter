@@ -92,14 +92,30 @@ def build_index() -> int:
     return len(nodes)
 
 
-def build_index_from_memory(files: list[tuple[str, bytes]]):
+def build_index_from_memory(files: list[tuple[str, bytes]], progress=None):
     """Builds an in-memory (non-persisted) vector index from in-memory file bytes."""
+    def _log(msg):
+        if progress:
+            progress.write(msg)
+
+    _log("  ↳ Downloading NLTK data...")
     _ensure_nltk()
+
     if not files:
         raise ValueError("No Drive files were found to import.")
 
+    _log("  ↳ Configuring OpenAI models...")
     _configure_models()
 
+    _log("  ↳ Verifying OpenAI API key...")
+    import openai
+    client_test = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=15)
+    try:
+        client_test.embeddings.create(input="test", model="text-embedding-3-small")
+    except Exception as exc:
+        raise ValueError(f"OpenAI API key check failed: {exc}")
+
+    _log("  ↳ Parsing documents...")
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_paths = []
         for name, content in files:
@@ -110,10 +126,13 @@ def build_index_from_memory(files: list[tuple[str, bytes]]):
 
         documents = SimpleDirectoryReader(input_files=tmp_paths).load_data()
 
-    client = QdrantClient(location=":memory:")
-    vector_store = QdrantVectorStore(client=client, collection_name=COLLECTION_NAME)
-    storage_context = StorageContext.from_defaults(vector_store=vector_store)
+    _log(f"  ↳ Splitting into chunks ({len(documents)} document sections)...")
     nodes = Settings.node_parser.get_nodes_from_documents(documents)
+
+    _log(f"  ↳ Embedding {len(nodes)} chunks via OpenAI (this may take a moment)...")
+    qdrant_client = QdrantClient(location=":memory:")
+    vector_store = QdrantVectorStore(client=qdrant_client, collection_name=COLLECTION_NAME)
+    storage_context = StorageContext.from_defaults(vector_store=vector_store)
     index = VectorStoreIndex(nodes, storage_context=storage_context)
 
     return index, len(nodes)

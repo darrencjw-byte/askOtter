@@ -183,7 +183,7 @@ def ensure_index_built():
             raise ValueError("OPENAI_API_KEY is not set. Add it to your Streamlit Cloud secrets.")
 
         progress.write("🧠 Chunking documents and generating embeddings...")
-        index, _chunk_count = rag_engine.build_index_from_memory(in_memory_files)
+        index, _chunk_count = rag_engine.build_index_from_memory(in_memory_files, progress=progress)
 
         st.session_state.memory_index = index
         st.session_state.memory_index_status = "ready"
