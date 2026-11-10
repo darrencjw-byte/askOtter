@@ -36,8 +36,8 @@ def _configure_models():
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise ValueError("OPENAI_API_KEY is not set.")
-    Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small", api_key=api_key, timeout=60)
-    Settings.llm = OpenAI(model="gpt-4o-mini", api_key=api_key, timeout=60)
+    Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small", api_key=api_key, timeout=60, max_retries=2)
+    Settings.llm = OpenAI(model="gpt-4o-mini", api_key=api_key, timeout=60, max_retries=2)
     Settings.node_parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
 
 
@@ -109,9 +109,11 @@ def build_index_from_memory(files: list[tuple[str, bytes]], progress=None):
 
     _log("  ↳ Verifying OpenAI API key...")
     import openai
-    client_test = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=15)
+    client_test = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=15, max_retries=1)
     try:
         client_test.embeddings.create(input="test", model="text-embedding-3-small")
+    except openai.RateLimitError as exc:
+        raise ValueError(f"OpenAI quota exhausted — add credits at https://platform.openai.com/settings/organization/billing/: {exc}")
     except Exception as exc:
         raise ValueError(f"OpenAI API key check failed: {exc}")
 
