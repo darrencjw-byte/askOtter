@@ -154,25 +154,37 @@ def ensure_index_built():
     """
     status = st.session_state.memory_index_status
     if status is not None and status != "building":
-        return  # already completed (or failed) this session
+        return
 
     st.session_state.memory_index_status = "building"
     try:
+        progress = st.status("Building index from Google Drive...", expanded=True)
+
+        progress.write("🔑 Getting credentials...")
         credentials = google_auth.get_credentials()
+
+        progress.write("📂 Listing Google Drive files...")
         drive_files = drive_sync.list_files(credentials, folder_url=st.session_state.gdrive_url or None)
+
         if not drive_files:
+            progress.update(label="No files found", state="complete")
             st.session_state.memory_index_status = "empty"
             return
 
+        progress.write(f"📥 Downloading {len(drive_files)} file(s)...")
         service = drive_sync._build_service("drive", "v3", credentials)
         in_memory_files = []
-        for f in drive_files:
+        for i, f in enumerate(drive_files, 1):
+            progress.write(f"  ↳ ({i}/{len(drive_files)}) {f['name']}")
             content, final_name = drive_sync.download_file(credentials, f["id"], f["mimeType"], f["name"], service=service)
             in_memory_files.append((final_name, content))
 
+        progress.write("🧠 Chunking documents and generating embeddings...")
         index, _chunk_count = rag_engine.build_index_from_memory(in_memory_files)
+
         st.session_state.memory_index = index
         st.session_state.memory_index_status = "ready"
+        progress.update(label=f"Index ready — {_chunk_count} chunks from {len(drive_files)} file(s)", state="complete")
     except Exception as exc:
         st.session_state.memory_index_status = "error"
         st.session_state.memory_index_error = str(exc)
@@ -233,9 +245,9 @@ def page_ask_otter():
     st.markdown(CHAT_PAGE_CSS, unsafe_allow_html=True)
 
     # Auto-import from Drive + auto-build the index, once per session, in memory only
-    if st.session_state.memory_index_status is None:
-        with st.spinner("Fetching your Google Drive files and building the index..."):
-            ensure_index_built()
+    status = st.session_state.memory_index_status
+    if status is None or status == "building":
+        ensure_index_built()
 
     # Sidebar Controls
     with st.sidebar:
