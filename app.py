@@ -179,6 +179,9 @@ def ensure_index_built():
             content, final_name = drive_sync.download_file(credentials, f["id"], f["mimeType"], f["name"], service=service)
             in_memory_files.append((final_name, content))
 
+        if not os.getenv("OPENAI_API_KEY"):
+            raise ValueError("OPENAI_API_KEY is not set. Add it to your Streamlit Cloud secrets.")
+
         progress.write("🧠 Chunking documents and generating embeddings...")
         index, _chunk_count = rag_engine.build_index_from_memory(in_memory_files)
 
