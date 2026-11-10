@@ -33,11 +33,12 @@ SUPPORTED_MIME_TYPES = [
 ]
 
 
-def list_files(credentials, folder_url: str | None = None, page_size: int = 20) -> list[dict]:
+def list_files(credentials, folder_url: str | None = None) -> list[dict]:
     """Lists files visible to the signed-in user — restricted to supported document types.
 
     If folder_url is given, lists only that folder's contents (folder ID parsed from the URL).
     Otherwise lists files across the user's Drive (My Drive + Shared Drives they belong to).
+    Paginates through all results.
     """
     service = _build_service("drive", "v3", credentials)
 
@@ -50,19 +51,27 @@ def list_files(credentials, folder_url: str | None = None, page_size: int = 20) 
 
     query = " and ".join(query_parts)
 
-    results = (
-        service.files()
-        .list(
-            q=query,
-            pageSize=page_size,
-            fields="files(id, name, mimeType, modifiedTime, webViewLink)",
-            includeItemsFromAllDrives=True,
-            supportsAllDrives=True,
-            corpora="allDrives" if not folder_id else "user",
+    all_files = []
+    page_token = None
+    while True:
+        results = (
+            service.files()
+            .list(
+                q=query,
+                pageSize=100,
+                fields="nextPageToken, files(id, name, mimeType, modifiedTime, webViewLink)",
+                includeItemsFromAllDrives=True,
+                supportsAllDrives=True,
+                corpora="allDrives" if not folder_id else "user",
+                pageToken=page_token,
+            )
+            .execute()
         )
-        .execute()
-    )
-    return results.get("files", [])
+        all_files.extend(results.get("files", []))
+        page_token = results.get("nextPageToken")
+        if not page_token:
+            break
+    return all_files
 
 
 def _extract_folder_id(folder_url: str) -> str | None:

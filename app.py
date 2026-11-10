@@ -174,10 +174,13 @@ def ensure_index_built():
         progress.write(f"📥 Downloading {len(drive_files)} file(s)...")
         service = drive_sync._build_service("drive", "v3", credentials)
         in_memory_files = []
+        indexed_file_names = []
         for i, f in enumerate(drive_files, 1):
             progress.write(f"  ↳ ({i}/{len(drive_files)}) {f['name']}")
             content, final_name = drive_sync.download_file(credentials, f["id"], f["mimeType"], f["name"], service=service)
             in_memory_files.append((final_name, content))
+            indexed_file_names.append(final_name)
+        st.session_state["indexed_file_names"] = indexed_file_names
 
         if not os.getenv("OPENAI_API_KEY"):
             raise ValueError("OPENAI_API_KEY is not set. Add it to your Streamlit Cloud secrets.")
@@ -342,7 +345,10 @@ def page_ask_otter():
                 try:
                     if st.session_state.memory_index is None:
                         raise ValueError("No index available. Your Google Drive may be empty or the import failed.")
-                    result = rag_engine.query_index(st.session_state.memory_index, prompt)
+                    file_names = st.session_state.get("indexed_file_names", [])
+                    file_list_context = "\n".join(f"- {name}" for name in file_names)
+                    augmented_prompt = f"{prompt}\n\n[System context — indexed files in this session:\n{file_list_context}]"
+                    result = rag_engine.query_index(st.session_state.memory_index, augmented_prompt)
                     assistant_response = result["answer"]
                     citations = result["sources"]
                 except ValueError as exc:
