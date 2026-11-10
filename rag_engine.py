@@ -3,8 +3,11 @@ import os
 import tempfile
 from pathlib import Path
 
-_nltk_data_dir = os.path.join(os.path.expanduser("~"), "nltk_data")
-os.makedirs(_nltk_data_dir, exist_ok=True)
+import stat
+
+_nltk_data_dir = os.path.join(tempfile.gettempdir(), "nltk_data_private")
+os.makedirs(_nltk_data_dir, mode=0o700, exist_ok=True)
+os.chmod(_nltk_data_dir, stat.S_IRWXU)
 os.environ["NLTK_DATA"] = _nltk_data_dir
 
 _nltk_ready = False
@@ -17,6 +20,10 @@ def _ensure_nltk():
     nltk.data.path = [_nltk_data_dir]
     nltk.download("stopwords", download_dir=_nltk_data_dir, quiet=True)
     nltk.download("punkt_tab", download_dir=_nltk_data_dir, quiet=True)
+    for root, dirs, files in os.walk(_nltk_data_dir):
+        os.chmod(root, stat.S_IRWXU)
+        for f in files:
+            os.chmod(os.path.join(root, f), stat.S_IRUSR | stat.S_IWUSR)
     _nltk_ready = True
 
 from llama_index.core import Settings, SimpleDirectoryReader, StorageContext, VectorStoreIndex
