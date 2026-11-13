@@ -69,7 +69,7 @@ def logout():
 # -----------------------------------------------------------------------------
 # 4. INDEX BUILDER (runs once for the entire app, shared across all sessions)
 # -----------------------------------------------------------------------------
-@st.cache_resource(show_spinner=False)
+@st.cache_resource(show_spinner="Indexing documents from Google Drive... (first load only)")
 def _build_global_index():
     """Builds the vector index once and caches it across all user sessions."""
     import logging
@@ -109,10 +109,7 @@ def ensure_index_built():
         return
 
     try:
-        with st.status("Building document index...", expanded=True) as status:
-            status.write("⏳ Fetching files from Google Drive and building embeddings...")
-            status.write("This only happens once — subsequent visits will be instant.")
-            index, file_names, chunk_count = _build_global_index()
+        index, file_names, chunk_count = _build_global_index()
 
         if index is None:
             st.session_state.memory_index_status = "empty"
