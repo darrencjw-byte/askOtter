@@ -8,7 +8,6 @@ load_dotenv()
 import rag_engine
 import google_auth
 import drive_sync
-import cookie_auth
 
 # -----------------------------------------------------------------------------
 # 1. APPLICATION & PAGE CONFIGURATION
@@ -31,88 +30,20 @@ def init_session_state():
     if "memory_index" not in st.session_state:
         st.session_state.memory_index = None
     if "memory_index_status" not in st.session_state:
-        st.session_state.memory_index_status = None  # None | "building" | "ready" | "error" | "empty"
+        st.session_state.memory_index_status = None
     if "memory_index_error" not in st.session_state:
         st.session_state.memory_index_error = None
-    if "sharepoint_url" not in st.session_state:
-        st.session_state.sharepoint_url = os.getenv("SHAREPOINT_URL", "")
-    if "gdrive_url" not in st.session_state:
-        st.session_state.gdrive_url = os.getenv("GDRIVE_URL", "")
 
 init_session_state()
 
 # -----------------------------------------------------------------------------
-# 2a. RESTORE SESSION FROM BROWSER COOKIE (no server storage)
+# 3. AUTHENTICATION GATE (password only)
 # -----------------------------------------------------------------------------
-# st.session_state lives only in one server process's RAM. If that process
-# restarts, or a later request lands on a different replica behind the load
-# balancer, the in-memory state is gone even though the user did nothing
-# wrong — they'd be bounced back to the Google sign-in screen mid-session.
-# Restoring from an encrypted browser cookie (set once after a successful
-# sign-in) means the user's own browser — not the server — carries the
-# state needed to resume.
-if "_cookie_restore_attempted" not in st.session_state:
-    st.session_state["_cookie_restore_attempted"] = True
-    _restored = cookie_auth.load_session()
-    if _restored:
-        if _restored.get("google_credentials"):
-            st.session_state["google_credentials"] = _restored["google_credentials"]
-        if _restored.get("google_profile"):
-            st.session_state["google_profile"] = _restored["google_profile"]
-        if _restored.get("authenticated"):
-            st.session_state["authenticated"] = True
-
-# -----------------------------------------------------------------------------
-# 2b. GOOGLE OAUTH CALLBACK HANDLING
-# -----------------------------------------------------------------------------
-# Google's authorization code is single-use. Streamlit reruns this script on
-# every interaction, and the ?code=... stays in the URL until explicitly
-# cleared — so without the guards below, a widget interaction (or a retry
-# after a transient error) while the code is still in the URL re-submits the
-# same already-consumed code and Google correctly rejects it as
-# invalid_grant. Clear the query param immediately (before the network call)
-# and remember the last code processed so a rerun can never resend it.
-_query_params = st.query_params
-_oauth_code = _query_params.get("code")
-if _oauth_code and not google_auth.is_signed_in() and st.session_state.get("_last_oauth_code") != _oauth_code:
-    st.session_state["_last_oauth_code"] = _oauth_code
-    st.query_params.clear()
-    try:
-        profile = google_auth.handle_callback(_oauth_code)
-        st.session_state["google_profile"] = profile
-        cookie_auth.save_session({
-            "google_credentials": st.session_state["google_credentials"],
-            "google_profile": profile,
-            "authenticated": st.session_state.get("authenticated", False),
-        })
-        st.rerun()
-    except Exception as exc:
-        st.error(f"Google sign-in failed: {exc}")
-        st.info("Please click **Sign in with Google** again to retry.")
-
-# -----------------------------------------------------------------------------
-# 3. AUTHENTICATION GATES
-# -----------------------------------------------------------------------------
-def google_signin_screen():
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown("## 🦦 AskOtter Portal Access")
-        st.caption("Public Sector AI Assistant — Sign in with your Google account to continue")
-
-        if not google_auth.is_configured():
-            st.error("Google OAuth is not configured (missing GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / REDIRECT_URI).")
-            return
-
-        auth_url = google_auth.get_authorization_url()
-        st.link_button("🔐 Sign in with Google", auth_url, use_container_width=True)
-
-
 def login_screen():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        profile = st.session_state.get("google_profile", {})
         st.markdown("## 🦦 AskOtter Portal Access")
-        st.caption(f"Signed in as **{profile.get('email', 'Google account')}** — enter the access password to continue")
+        st.caption("Public Sector AI Assistant — enter the access password to continue")
 
         with st.form("login_form"):
             password_input = st.text_input("Enter Access Password", type="password")
@@ -122,11 +53,6 @@ def login_screen():
                 target_password = os.getenv("APP_PASSWORD", "CFS@2027")
                 if password_input == target_password:
                     st.session_state.authenticated = True
-                    cookie_auth.save_session({
-                        "google_credentials": st.session_state.get("google_credentials"),
-                        "google_profile": st.session_state.get("google_profile"),
-                        "authenticated": True,
-                    })
                     st.success("Authentication successful! Redirecting...")
                     time.sleep(0.5)
                     st.rerun()
@@ -136,22 +62,13 @@ def login_screen():
 def logout():
     st.session_state.authenticated = False
     st.session_state.messages = []
-    st.session_state.memory_index = None
-    st.session_state.memory_index_status = None
-    st.session_state.memory_index_error = None
-    google_auth.sign_out()
-    cookie_auth.clear_session()
     st.rerun()
 
 
+# -----------------------------------------------------------------------------
+# 4. INDEX BUILDER (runs once per session, uses owner's Drive credentials)
+# -----------------------------------------------------------------------------
 def ensure_index_built():
-    """Fetches the signed-in user's Drive files fresh and builds the index in memory.
-
-    Runs automatically the first time the chat page is opened in this session.
-    Nothing is written to disk: files are downloaded straight into memory, parsed
-    via a temp dir that self-deletes, and the vector index lives only in RAM
-    (session_state) — gone the moment the session ends.
-    """
     status = st.session_state.memory_index_status
     if status is not None and status != "building":
         return
@@ -160,11 +77,12 @@ def ensure_index_built():
     try:
         progress = st.status("Building index from Google Drive...", expanded=True)
 
-        progress.write("🔑 Getting credentials...")
+        progress.write("🔑 Loading Drive credentials...")
         credentials = google_auth.get_credentials()
 
+        gdrive_url = os.getenv("GDRIVE_URL", "")
         progress.write("📂 Listing Google Drive files...")
-        drive_files = drive_sync.list_files(credentials, folder_url=st.session_state.gdrive_url or None)
+        drive_files = drive_sync.list_files(credentials, folder_url=gdrive_url or None)
 
         if not drive_files:
             progress.update(label="No files found", state="complete")
@@ -195,19 +113,16 @@ def ensure_index_built():
         st.session_state.memory_index_status = "error"
         st.session_state.memory_index_error = str(exc)
 
+
 # -----------------------------------------------------------------------------
-# 4. PAGE DEFINITIONS
+# 5. PAGE DEFINITIONS
 # -----------------------------------------------------------------------------
 
-# PAGE 1: CHAT INTERFACE
 CHAT_PAGE_CSS = """
 <style>
-/* Desk-style soft gradient backdrop behind the main chat column */
 [data-testid="stAppViewContainer"] > .main {
     background: radial-gradient(circle at 20% 0%, #efe6fb 0%, #f7f3fd 35%, #ffffff 70%);
 }
-
-/* Rounded, floating chat input bar */
 [data-testid="stChatInput"] {
     border-radius: 20px;
     box-shadow: 0 4px 24px rgba(90, 60, 160, 0.08);
@@ -215,8 +130,6 @@ CHAT_PAGE_CSS = """
 [data-testid="stChatInput"] textarea {
     font-size: 1.02rem;
 }
-
-/* Pill-shaped suggestion buttons */
 .askotter-suggestion-row button {
     border-radius: 999px !important;
     border: 1px solid #e3d9f5 !important;
@@ -228,8 +141,6 @@ CHAT_PAGE_CSS = """
     border-color: #8b5cf6 !important;
     color: #6d28d9 !important;
 }
-
-/* Empty-state hero */
 .askotter-hero {
     text-align: center;
     padding-top: 4rem;
@@ -250,12 +161,11 @@ CHAT_PAGE_CSS = """
 def page_ask_otter():
     st.markdown(CHAT_PAGE_CSS, unsafe_allow_html=True)
 
-    # Auto-import from Drive + auto-build the index, once per session, in memory only
     status = st.session_state.memory_index_status
     if status is None or status == "building":
         ensure_index_built()
 
-    # Sidebar Controls
+    # Sidebar
     with st.sidebar:
         st.markdown("### 🦦 AskOtter")
         st.caption("Context-aware policy & document intelligence")
@@ -282,13 +192,12 @@ def page_ask_otter():
 
     has_history = len(st.session_state.messages) > 0
 
-    # Empty-state hero (Desk-style greeting + suggestion chips) shown until the first message
     if not has_history:
         st.markdown(
             """
             <div class="askotter-hero">
                 <h1>🦦 Ask away, your documents are ready</h1>
-                <p>Answers are grounded in the files from your Google Drive, imported fresh this session.</p>
+                <p>Answers are grounded in files from the configured Google Drive folder.</p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -312,7 +221,7 @@ def page_ask_otter():
             st.session_state["_pending_prompt"] = suggestion_clicked
             st.rerun()
 
-    # Display Chat History
+    # Chat history
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
@@ -322,9 +231,8 @@ def page_ask_otter():
                         st.markdown(f"**[{idx}] {src['title']}** (Page {src['page']})")
                         st.caption(f'"{src["snippet"]}"')
 
-    # Query Input status messages
     if st.session_state.memory_index_status == "empty":
-        st.info("📂 No supported files were found in your Google Drive to index.")
+        st.info("📂 No supported files were found in the configured Google Drive folder.")
     elif st.session_state.memory_index_status == "error":
         st.warning(f"⚠️ Could not build the index from Google Drive: {st.session_state.memory_index_error}")
 
@@ -334,17 +242,15 @@ def page_ask_otter():
         prompt = pending
 
     if prompt:
-        # Store & render user message
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # Generate Assistant Response
         with st.chat_message("assistant"):
             with st.spinner("Retrieving relevant passages & generating grounded answer..."):
                 try:
                     if st.session_state.memory_index is None:
-                        raise ValueError("No index available. Your Google Drive may be empty or the import failed.")
+                        raise ValueError("No index available. The Google Drive may be empty or the import failed.")
                     file_names = st.session_state.get("indexed_file_names", [])
                     file_list_context = "\n".join(f"- {name}" for name in file_names)
                     augmented_prompt = f"{prompt}\n\n[System context — indexed files in this session:\n{file_list_context}]"
@@ -365,27 +271,27 @@ def page_ask_otter():
                             st.markdown(f"**[{idx}] {src['title']}** (Page {src['page']})")
                             st.caption(f'"{src["snippet"]}"')
 
-        # Store Assistant Message
         st.session_state.messages.append({
             "role": "assistant",
             "content": assistant_response,
             "sources": citations
         })
 
+
 # PAGE 2: ABOUT US
 def page_about_us():
     st.title("ℹ️ About AskOtter")
     st.markdown("### Public Sector AI Innovation")
-    
+
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("""
         **AskOtter** is an enterprise Retrieval-Augmented Generation (RAG) agent developed for the **AI Champion Bootcamp (August – November 2026)**.
-        
+
         #### Primary Objectives:
-        * **Automate Document Discovery**: Index institutional memory across SharePoint and Google Drive.
-        * **Zero Halucination Target**: Enforce strict source citations on every query answer.
-        * **Secure Access**: Implement role-aware container deployment and password gating.
+        * **Automate Document Discovery**: Index institutional memory from a configured Google Drive folder.
+        * **Zero Hallucination Target**: Enforce strict source citations on every query answer.
+        * **Secure Access**: Password-gated access to the portal.
         """)
     with col2:
         st.info("""
@@ -396,6 +302,7 @@ def page_about_us():
         * **Target Grading Focus:** Session State, Prompt Engineering, Agent Tools (25% Weightage)
         """)
 
+
 # PAGE 3: METHODOLOGY
 def page_methodology():
     st.title("⚙️ System Methodology & Architecture")
@@ -403,7 +310,7 @@ def page_methodology():
 
     st.markdown("""
     #### 1. End-to-End Data Flow
-    1. **Ingestion Layer**: On each session start, the signed-in user's Google Drive files (`.pdf`, `.docx`, `.xlsx`) are fetched via the Google Drive API and loaded into memory.
+    1. **Ingestion Layer**: On each session start, documents (`.pdf`, `.docx`, `.xlsx`) are fetched from a pre-configured Google Drive folder via the Google Drive API using stored owner credentials.
     2. **Vector Indexing**: Documents are parsed into overlapping chunks and converted to vector embeddings using OpenAI `text-embedding-3-small`. The index lives entirely in RAM (Qdrant in-memory) — nothing is written to disk.
     3. **Query Engine**: Streamlit passes user queries to the LlamaIndex retriever, extracting the top-*k* relevant passages based on cosine similarity.
     4. **Grounded Synthesis**: Retrieved context and the user query are merged into a constrained system prompt before invoking OpenAI `gpt-4o-mini` for answer generation with source citations.
@@ -412,108 +319,37 @@ def page_methodology():
     st.markdown("#### 2. Process Architecture")
     st.code("""
 [ Google Drive API ] ---> [ In-Memory Chunking & Embeddings ] ---> [ Qdrant In-Memory ]
-                                                                          |
-[ User Query ] -------> [ Google OAuth + Password Gate ] -------> [ Vector Retriever ]
+          (owner credentials)                                              |
+[ User Query ] ----------> [ Password Gate ] -------------------> [ Vector Retriever ]
                                                                           |
 [ Grounded Answer + Citations ] <---------- [ LLM Synthesis ] <-----------+
     """, language="text")
 
     st.markdown("""
     #### 3. Key Design Decisions
-    * **Fully in-memory**: No persistent vector database — the index is rebuilt fresh each session from the user's own Drive, ensuring data is always up to date and nothing is stored server-side.
-    * **Per-user scoping**: Each user's Google OAuth credentials scope access to only their own Drive files.
-    * **Session cookie persistence**: Encrypted browser cookies (Fernet) restore sign-in state across page reloads without server-side storage.
+    * **Fully in-memory**: No persistent vector database — the index is rebuilt fresh each session from the configured Drive folder.
+    * **Owner-scoped Drive access**: The app reads from the owner's Google Drive using a stored refresh token — users do not need their own Google account.
+    * **Password-gated access**: Simple password authentication protects the portal.
     * **Deployed on Streamlit Community Cloud**: Zero-infrastructure hosting with automatic redeployment from GitHub.
     """)
 
-# PAGE 4: SETTINGS
-def page_settings():
-    st.title("⚙️ Data Source Configuration")
-    st.caption("Upload documents to index, or connect a cloud folder")
-    st.divider()
-
-    st.markdown("### 📄 Document Upload & Indexing")
-    st.caption("Upload PDF, DOCX, or TXT files — this builds the real vector index used by the chat assistant")
-
-    uploaded_files = st.file_uploader(
-        "Upload documents",
-        type=["pdf", "docx", "txt", "md"],
-        accept_multiple_files=True,
-    )
-    if uploaded_files and st.button("Save Uploaded Files", type="primary", key="save_uploads"):
-        count = rag_engine.save_uploaded_files(uploaded_files)
-        st.success(f"Saved {count} file(s) to the document store")
-
-    existing_docs = rag_engine.list_documents()
-    if existing_docs:
-        st.markdown(f"**Documents in store ({len(existing_docs)}):**")
-        for doc in existing_docs:
-            st.caption(f"📄 {doc}")
-
-        if st.button("🔄 Build / Rebuild Index", type="primary", key="build_index"):
-            with st.spinner("Chunking, embedding, and writing to Qdrant..."):
-                try:
-                    chunk_count = rag_engine.build_index()
-                    st.success(f"Index built successfully — {chunk_count} chunks indexed")
-                except Exception as exc:
-                    st.error(f"Indexing failed: {exc}")
-    else:
-        st.caption("No documents uploaded yet.")
-
-    st.divider()
-    st.markdown("### ☁️ Cloud Folder Sync")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("### 📊 SharePoint Configuration")
-        st.warning(
-            "⚠️ **Not yet connected.** SharePoint sync requires a WOG AD / Entra ID app "
-            "registration with admin consent — not available in this environment yet."
-        )
-
-    with col2:
-        st.markdown("### 📁 Google Drive")
-        profile = st.session_state.get("google_profile", {})
-        st.success(f"Signed in as **{profile.get('email', 'Google account')}**")
-        st.caption(
-            "Your Drive files are fetched fresh and indexed automatically in memory each "
-            "time you open the Chat page — nothing is uploaded or saved here. Use "
-            "**🔄 Re-sync Google Drive** on the Chat page to refresh with the latest files."
-        )
-
-        gdrive_input = st.text_input(
-            "Shared Drive folder URL (optional — leave blank to use all of your Drive)",
-            value=st.session_state.gdrive_url,
-            placeholder="https://drive.google.com/drive/folders/...",
-        )
-        st.session_state.gdrive_url = gdrive_input
 
 # -----------------------------------------------------------------------------
-# 5. NAVIGATION ROUTER & APP ENTRY POINT
+# 6. NAVIGATION ROUTER & APP ENTRY POINT
 # -----------------------------------------------------------------------------
-if not google_auth.is_signed_in():
-    google_signin_screen()
-elif not st.session_state.authenticated:
+if not st.session_state.authenticated:
     login_screen()
 else:
-    # Page Declarations
     p_chat = st.Page(page_ask_otter, title="AskOtter Chat", icon="💬", default=True)
     p_about = st.Page(page_about_us, title="About Us", icon="ℹ️")
     p_method = st.Page(page_methodology, title="Methodology", icon="⚙️")
-    p_settings = st.Page(page_settings, title="Data Source Settings", icon="⚙️")
 
-    # Routing Configuration
     pg = st.navigation({
         "Core Assistant": [p_chat],
         "Documentation": [p_about, p_method],
-        "Configuration": [p_settings]
     })
 
-    # Sidebar User Profile & Logout
     with st.sidebar:
-        _profile = st.session_state.get("google_profile", {})
-        st.caption(f"👤 Logged in as: **{_profile.get('email', 'Authenticated User')}**")
         if st.button("Log Out", type="secondary", use_container_width=True):
             logout()
 
