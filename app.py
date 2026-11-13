@@ -280,58 +280,323 @@ def page_ask_otter():
 
 # PAGE 2: ABOUT US
 def page_about_us():
-    st.title("ℹ️ About AskOtter")
-    st.markdown("### Public Sector AI Innovation")
+    st.title("ℹ️ About Us")
+    st.markdown("---")
 
+    # --- Project Scope ---
+    st.markdown("### 📋 Project Scope")
+    st.markdown("""
+    **AskOtter** is an enterprise Retrieval-Augmented Generation (RAG) assistant developed for the
+    **AI Champion Bootcamp (August – November 2026)**. It enables public sector officers to query
+    institutional documents using natural language and receive grounded, citation-backed answers —
+    reducing the time spent manually searching through policy documents, guidelines, and reports.
+    """)
+
+    st.markdown("---")
+
+    # --- Objectives ---
+    st.markdown("### 🎯 Objectives")
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("""
-        **AskOtter** is an enterprise Retrieval-Augmented Generation (RAG) agent developed for the **AI Champion Bootcamp (August – November 2026)**.
+        1. **Automate Document Discovery**
+           - Index documents from a pre-configured Google Drive folder automatically on each session start.
+           - Support PDF, DOCX, XLSX, Google Docs, and Google Sheets.
+           - Recursively scan subfolders for complete coverage.
 
-        #### Primary Objectives:
-        * **Automate Document Discovery**: Index institutional memory from a configured Google Drive folder.
-        * **Zero Hallucination Target**: Enforce strict source citations on every query answer.
-        * **Secure Access**: Password-gated access to the portal.
+        2. **Provide Grounded, Accurate Answers**
+           - Every answer is synthesised from retrieved document passages — not from the LLM's training data.
+           - Source citations with document name, page number, and relevant snippet are displayed for every response.
         """)
     with col2:
-        st.info("""
-        #### Key Metadata
-        * **Repo Slug:** `askOtter`
-        * **Deployment Runtime:** Streamlit Community Cloud
-        * **Submission Portal:** LaunchPad
-        * **Target Grading Focus:** Session State, Prompt Engineering, Agent Tools (25% Weightage)
+        st.markdown("""
+        3. **Ensure Secure Access**
+           - Password-gated portal — only authorised users with the access password can use the assistant.
+           - Google Drive access uses the owner's stored credentials; end users do not need a Google account.
+
+        4. **Zero-Infrastructure Deployment**
+           - Hosted on Streamlit Community Cloud with automatic redeployment from GitHub.
+           - Fully in-memory indexing — no persistent database, no data stored server-side.
         """)
+
+    st.markdown("---")
+
+    # --- Data Sources ---
+    st.markdown("### 📂 Data Sources")
+    st.markdown("""
+    | Source | Type | Access Method |
+    |--------|------|---------------|
+    | Google Drive (configured folder) | PDF, DOCX, XLSX, Google Docs, Google Sheets | Google Drive API v3 with OAuth 2.0 refresh token |
+    | Manual upload (Settings page) | PDF, DOCX, TXT, MD | Streamlit file uploader |
+    """)
+    st.markdown("""
+    - Documents are fetched **fresh each session** — the index always reflects the latest content in the Drive folder.
+    - The app recursively scans all subfolders within the configured folder.
+    - Google Docs and Sheets are automatically exported to PDF/XLSX format before indexing.
+    """)
+
+    st.markdown("---")
+
+    # --- Features ---
+    st.markdown("### ✨ Features")
+    feat_col1, feat_col2, feat_col3 = st.columns(3)
+    with feat_col1:
+        st.markdown("""
+        **💬 RAG Chat Assistant**
+        - Natural language Q&A over indexed documents
+        - Grounded answers with citation sources
+        - Conversation history within session
+        - Suggestion chips for common queries
+        """)
+    with feat_col2:
+        st.markdown("""
+        **🔄 Automatic Indexing**
+        - Google Drive folder indexed on session start
+        - Recursive subfolder scanning
+        - In-memory vector index (Qdrant)
+        - Re-sync button for on-demand refresh
+        """)
+    with feat_col3:
+        st.markdown("""
+        **🔒 Secure & Stateless**
+        - Password-gated access
+        - No data persisted server-side
+        - Owner-scoped Drive credentials
+        - Session-isolated index (per user)
+        """)
+
+    st.markdown("---")
+
+    # --- Key Metadata ---
+    st.markdown("### 📊 Key Metadata")
+    st.info("""
+    | Field | Value |
+    |-------|-------|
+    | **Project Name** | AskOtter |
+    | **Repo Slug** | `askOtter` |
+    | **Deployment Runtime** | Streamlit Community Cloud |
+    | **Submission Portal** | LaunchPad |
+    | **LLM** | OpenAI `gpt-4o-mini` |
+    | **Embedding Model** | OpenAI `text-embedding-3-small` |
+    | **Vector Store** | Qdrant (in-memory) |
+    | **Framework** | LlamaIndex |
+    | **Target Grading Focus** | Session State, Prompt Engineering, Agent Tools (25% Weightage) |
+    """)
 
 
 # PAGE 3: METHODOLOGY
 def page_methodology():
-    st.title("⚙️ System Methodology & Architecture")
-    st.markdown("### Technical Framework & Flowchart")
+    st.title("⚙️ Methodology")
+    st.markdown("---")
 
+    # --- Overview ---
+    st.markdown("### 🏗️ System Architecture Overview")
     st.markdown("""
-    #### 1. End-to-End Data Flow
-    1. **Ingestion Layer**: On each session start, documents (`.pdf`, `.docx`, `.xlsx`) are fetched from a pre-configured Google Drive folder via the Google Drive API using stored owner credentials.
-    2. **Vector Indexing**: Documents are parsed into overlapping chunks and converted to vector embeddings using OpenAI `text-embedding-3-small`. The index lives entirely in RAM (Qdrant in-memory) — nothing is written to disk.
-    3. **Query Engine**: Streamlit passes user queries to the LlamaIndex retriever, extracting the top-*k* relevant passages based on cosine similarity.
-    4. **Grounded Synthesis**: Retrieved context and the user query are merged into a constrained system prompt before invoking OpenAI `gpt-4o-mini` for answer generation with source citations.
+    AskOtter follows a **Retrieval-Augmented Generation (RAG)** architecture. Instead of relying
+    on the LLM's training data, every answer is grounded in the user's own documents. The system
+    has two core use cases, each with its own data flow:
+
+    1. **Document Indexing** — Fetching, parsing, and embedding documents from Google Drive
+    2. **Chat with Documents** — Querying the index and generating grounded answers
     """)
 
-    st.markdown("#### 2. Process Architecture")
+    st.markdown("---")
+
+    # --- Data Flow ---
+    st.markdown("### 📊 End-to-End Data Flow")
+    st.markdown("""
+    | Stage | Component | Technology | Description |
+    |-------|-----------|------------|-------------|
+    | 1. Authentication | Password Gate | Streamlit | User enters access password to gain entry |
+    | 2. Data Ingestion | Google Drive API v3 | `google-api-python-client` | Fetches PDF, DOCX, XLSX, Google Docs/Sheets from configured folder (recursive) |
+    | 3. Document Parsing | File Loaders | LlamaIndex `SimpleDirectoryReader` | Extracts text content from each document format |
+    | 4. Chunking | Sentence Splitter | LlamaIndex `SentenceSplitter` | Splits documents into 1024-token overlapping chunks (100-token overlap) |
+    | 5. Embedding | Vector Encoding | OpenAI `text-embedding-3-small` | Converts each chunk into a 1536-dimensional vector |
+    | 6. Indexing | Vector Store | Qdrant (in-memory) | Stores vectors for similarity search |
+    | 7. Retrieval | Query Engine | LlamaIndex `VectorStoreIndex` | Finds top-*k* most relevant chunks via cosine similarity |
+    | 8. Synthesis | LLM Generation | OpenAI `gpt-4o-mini` | Generates a grounded answer from retrieved passages |
+    | 9. Citation | Source Attribution | Custom post-processing | Extracts document name, page number, and snippet for each source |
+    """)
+
+    st.markdown("---")
+
+    # --- Use Case 1: Document Indexing ---
+    st.markdown("### 📄 Use Case 1: Document Indexing")
+    st.markdown("""
+    This flow runs **automatically at session start**. It fetches the owner's Google Drive
+    documents and builds an in-memory vector index that powers all subsequent queries.
+    """)
+
+    st.markdown("#### Flowchart")
     st.code("""
-[ Google Drive API ] ---> [ In-Memory Chunking & Embeddings ] ---> [ Qdrant In-Memory ]
-          (owner credentials)                                              |
-[ User Query ] ----------> [ Password Gate ] -------------------> [ Vector Retriever ]
-                                                                          |
-[ Grounded Answer + Citations ] <---------- [ LLM Synthesis ] <-----------+
+    ┌─────────────────────┐
+    │   Session Starts    │
+    └─────────┬───────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │  Load Google Drive   │
+    │  Credentials         │
+    │  (stored refresh     │
+    │   token in secrets)  │
+    └─────────┬───────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │  List Files in       │
+    │  Configured Folder   │◄──── Recursive: scans
+    │  (Google Drive API)  │      all subfolders
+    └─────────┬───────────┘
+              │
+              ▼
+    ┌─────────────────────┐     ┌──────────────────┐
+    │  Files Found?        │─No─►│ Show "No files   │
+    │                      │     │ found" message    │
+    └─────────┬───────────┘     └──────────────────┘
+              │ Yes
+              ▼
+    ┌─────────────────────┐
+    │  Download Each File  │
+    │  into Memory         │◄──── Google Docs → PDF
+    │  (no disk writes)    │      Sheets → XLSX
+    └─────────┬───────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │  Parse & Extract     │
+    │  Text Content        │◄──── SimpleDirectoryReader
+    │                      │      (PDF, DOCX, XLSX)
+    └─────────┬───────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │  Split into Chunks   │◄──── 1024 tokens per chunk
+    │  (SentenceSplitter)  │      100 token overlap
+    └─────────┬───────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │  Generate Embeddings │◄──── OpenAI
+    │  for Each Chunk      │      text-embedding-3-small
+    └─────────┬───────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │  Store in Qdrant     │
+    │  In-Memory Index     │──── Ready for queries
+    └─────────────────────┘
     """, language="text")
 
     st.markdown("""
-    #### 3. Key Design Decisions
-    * **Fully in-memory**: No persistent vector database — the index is rebuilt fresh each session from the configured Drive folder.
-    * **Owner-scoped Drive access**: The app reads from the owner's Google Drive using a stored refresh token — users do not need their own Google account.
-    * **Password-gated access**: Simple password authentication protects the portal.
-    * **Deployed on Streamlit Community Cloud**: Zero-infrastructure hosting with automatic redeployment from GitHub.
+    **Key details:**
+    - All files are processed **in memory** — nothing is written to disk on the server.
+    - Google Docs and Sheets are automatically **exported** to PDF/XLSX before parsing.
+    - The index is **session-scoped**: it is rebuilt fresh for each user session, ensuring data is always up to date.
+    - Embeddings are sent to OpenAI in batches of 100 chunks to avoid API rate limits.
     """)
+
+    st.markdown("---")
+
+    # --- Use Case 2: Chat with Documents ---
+    st.markdown("### 💬 Use Case 2: Chat with Documents")
+    st.markdown("""
+    Once the index is built, users can ask natural language questions. The system retrieves
+    the most relevant passages and generates a grounded answer with source citations.
+    """)
+
+    st.markdown("#### Flowchart")
+    st.code("""
+    ┌─────────────────────┐
+    │  User Enters Query   │
+    │  (chat input)        │
+    └─────────┬───────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │  Augment Query with  │◄──── Appends list of all
+    │  File List Context   │      indexed file names
+    └─────────┬───────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │  Embed Query into    │◄──── Same embedding model
+    │  Vector              │      (text-embedding-3-small)
+    └─────────┬───────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │  Cosine Similarity   │
+    │  Search in Qdrant    │◄──── Retrieve top-4
+    │  (top-k retrieval)   │      most relevant chunks
+    └─────────┬───────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │  Construct Prompt     │
+    │  [System Instruction  │◄──── "Answer based ONLY
+    │   + Retrieved Context │      on the provided
+    │   + User Query]       │      context passages"
+    └─────────┬───────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │  LLM Generates       │◄──── OpenAI gpt-4o-mini
+    │  Grounded Answer     │
+    └─────────┬───────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │  Extract Citation     │
+    │  Sources             │◄──── Document name,
+    │  (post-processing)   │      page number, snippet
+    └─────────┬───────────┘
+              │
+              ▼
+    ┌─────────────────────┐
+    │  Display Answer +    │
+    │  Expandable Citations│
+    │  + Store in History  │
+    └─────────────────────┘
+    """, language="text")
+
+    st.markdown("""
+    **Key details:**
+    - The query is **augmented** with the full list of indexed file names so the LLM can answer questions like "list my documents" accurately.
+    - Retrieval uses **cosine similarity** over the vector embeddings to find the top-4 most relevant chunks.
+    - The LLM is instructed to answer **only** from the retrieved context — not from its training data.
+    - Each answer includes **expandable citation sources** showing the document name, page number, and a text snippet.
+    - **Conversation history** is maintained within the session for follow-up questions.
+    """)
+
+    st.markdown("---")
+
+    # --- Implementation Details ---
+    st.markdown("### 🔧 Implementation Details")
+
+    impl_col1, impl_col2 = st.columns(2)
+    with impl_col1:
+        st.markdown("""
+        #### Technology Stack
+        | Component | Technology |
+        |-----------|------------|
+        | Frontend & Hosting | Streamlit Community Cloud |
+        | LLM | OpenAI `gpt-4o-mini` |
+        | Embeddings | OpenAI `text-embedding-3-small` |
+        | Vector Store | Qdrant (in-memory) |
+        | RAG Framework | LlamaIndex |
+        | Document Parsing | `pypdf`, `docx2txt` |
+        | Data Source | Google Drive API v3 |
+        | Authentication | Password gate |
+        """)
+    with impl_col2:
+        st.markdown("""
+        #### Design Decisions
+        - **Fully in-memory**: No persistent database — the index is rebuilt fresh each session, ensuring data is always current and nothing is stored server-side.
+        - **Owner-scoped Drive access**: The app reads from the owner's Google Drive using a stored OAuth refresh token. End users do not need their own Google account.
+        - **Batch embeddings**: Chunks are embedded in batches of 100 to stay within OpenAI's rate limits (1M tokens per minute).
+        - **Recursive folder scanning**: The Drive API scans the configured folder and all subfolders, so nested document structures are fully indexed.
+        - **Session isolation**: Each user session builds its own independent index — no cross-session data leakage.
+        """)
 
 
 # -----------------------------------------------------------------------------
