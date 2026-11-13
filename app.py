@@ -67,8 +67,34 @@ def logout():
 
 
 # -----------------------------------------------------------------------------
-# 4. INDEX BUILDER (runs once per session, uses owner's Drive credentials)
+# 4. INDEX BUILDER (runs once for the entire app, shared across all sessions)
 # -----------------------------------------------------------------------------
+@st.cache_resource(show_spinner=False)
+def _build_global_index():
+    """Builds the vector index once and caches it across all user sessions."""
+    credentials = google_auth.get_credentials()
+
+    gdrive_url = os.getenv("GDRIVE_URL", "")
+    drive_files = drive_sync.list_files(credentials, folder_url=gdrive_url or None)
+
+    if not drive_files:
+        return None, [], 0
+
+    if not os.getenv("OPENAI_API_KEY"):
+        raise ValueError("OPENAI_API_KEY is not set. Add it to your Streamlit Cloud secrets.")
+
+    service = drive_sync._build_service("drive", "v3", credentials)
+    in_memory_files = []
+    file_names = []
+    for f in drive_files:
+        content, final_name = drive_sync.download_file(credentials, f["id"], f["mimeType"], f["name"], service=service)
+        in_memory_files.append((final_name, content))
+        file_names.append(final_name)
+
+    index, chunk_count = rag_engine.build_index_from_memory(in_memory_files)
+    return index, file_names, chunk_count
+
+
 def ensure_index_built():
     status = st.session_state.memory_index_status
     if status is not None and status != "building":
@@ -76,40 +102,16 @@ def ensure_index_built():
 
     st.session_state.memory_index_status = "building"
     try:
-        progress = st.status("Building index from Google Drive...", expanded=True)
+        with st.spinner("Loading document index..."):
+            index, file_names, chunk_count = _build_global_index()
 
-        progress.write("🔑 Loading Drive credentials...")
-        credentials = google_auth.get_credentials()
-
-        gdrive_url = os.getenv("GDRIVE_URL", "")
-        progress.write("📂 Listing Google Drive files...")
-        drive_files = drive_sync.list_files(credentials, folder_url=gdrive_url or None)
-
-        if not drive_files:
-            progress.update(label="No files found", state="complete")
+        if index is None:
             st.session_state.memory_index_status = "empty"
             return
 
-        progress.write(f"📥 Downloading {len(drive_files)} file(s)...")
-        service = drive_sync._build_service("drive", "v3", credentials)
-        in_memory_files = []
-        indexed_file_names = []
-        for i, f in enumerate(drive_files, 1):
-            progress.write(f"  ↳ ({i}/{len(drive_files)}) {f['name']}")
-            content, final_name = drive_sync.download_file(credentials, f["id"], f["mimeType"], f["name"], service=service)
-            in_memory_files.append((final_name, content))
-            indexed_file_names.append(final_name)
-        st.session_state["indexed_file_names"] = indexed_file_names
-
-        if not os.getenv("OPENAI_API_KEY"):
-            raise ValueError("OPENAI_API_KEY is not set. Add it to your Streamlit Cloud secrets.")
-
-        progress.write("🧠 Chunking documents and generating embeddings...")
-        index, _chunk_count = rag_engine.build_index_from_memory(in_memory_files, progress=progress)
-
         st.session_state.memory_index = index
+        st.session_state["indexed_file_names"] = file_names
         st.session_state.memory_index_status = "ready"
-        progress.update(label=f"Index ready — {_chunk_count} chunks from {len(drive_files)} file(s)", state="complete")
     except Exception as exc:
         st.session_state.memory_index_status = "error"
         st.session_state.memory_index_error = str(exc)
@@ -176,6 +178,7 @@ def page_ask_otter():
             st.session_state.messages = []
             st.rerun()
         if st.button("🔄 Re-sync Google Drive", use_container_width=True, type="secondary"):
+            _build_global_index.clear()
             st.session_state.memory_index = None
             st.session_state.memory_index_status = None
             st.session_state.memory_index_error = None
@@ -183,7 +186,7 @@ def page_ask_otter():
         st.markdown("---")
         status_map = {
             "building": "Building...",
-            "ready": "Active (in-memory, this session only)",
+            "ready": "Active (cached across sessions)",
             "empty": "No Drive files found",
             "error": "Failed to build",
         }
