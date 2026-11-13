@@ -33,25 +33,12 @@ SUPPORTED_MIME_TYPES = [
 ]
 
 
-def list_files(credentials, folder_url: str | None = None) -> list[dict]:
-    """Lists files visible to the signed-in user — restricted to supported document types.
-
-    If folder_url is given, lists only that folder's contents (folder ID parsed from the URL).
-    Otherwise lists files across the user's Drive (My Drive + Shared Drives they belong to).
-    Paginates through all results.
-    """
-    service = _build_service("drive", "v3", credentials)
-
+def _list_files_in_folder(service, folder_id: str) -> list[dict]:
+    """Lists all supported files inside a single folder (non-recursive)."""
     mime_filter = " or ".join(f"mimeType='{m}'" for m in SUPPORTED_MIME_TYPES)
-    query_parts = [f"({mime_filter})", "trashed=false"]
+    query = f"({mime_filter}) and trashed=false and '{folder_id}' in parents"
 
-    folder_id = _extract_folder_id(folder_url) if folder_url else None
-    if folder_id:
-        query_parts.append(f"'{folder_id}' in parents")
-
-    query = " and ".join(query_parts)
-
-    all_files = []
+    files = []
     page_token = None
     while True:
         results = (
@@ -60,17 +47,82 @@ def list_files(credentials, folder_url: str | None = None) -> list[dict]:
                 q=query,
                 pageSize=100,
                 fields="nextPageToken, files(id, name, mimeType, modifiedTime, webViewLink)",
-                includeItemsFromAllDrives=True,
                 supportsAllDrives=True,
-                corpora="allDrives" if not folder_id else "user",
+                includeItemsFromAllDrives=True,
                 pageToken=page_token,
             )
             .execute()
         )
-        all_files.extend(results.get("files", []))
+        files.extend(results.get("files", []))
         page_token = results.get("nextPageToken")
         if not page_token:
             break
+    return files
+
+
+def _list_subfolders(service, folder_id: str) -> list[str]:
+    """Returns IDs of immediate subfolders inside a folder."""
+    query = f"mimeType='application/vnd.google-apps.folder' and trashed=false and '{folder_id}' in parents"
+    folder_ids = []
+    page_token = None
+    while True:
+        results = (
+            service.files()
+            .list(
+                q=query,
+                pageSize=100,
+                fields="nextPageToken, files(id)",
+                supportsAllDrives=True,
+                includeItemsFromAllDrives=True,
+                pageToken=page_token,
+            )
+            .execute()
+        )
+        folder_ids.extend(f["id"] for f in results.get("files", []))
+        page_token = results.get("nextPageToken")
+        if not page_token:
+            break
+    return folder_ids
+
+
+def list_files(credentials, folder_url: str | None = None) -> list[dict]:
+    """Lists supported files, recursing into subfolders when a folder URL is given."""
+    service = _build_service("drive", "v3", credentials)
+
+    folder_id = _extract_folder_id(folder_url) if folder_url else None
+
+    if not folder_id:
+        mime_filter = " or ".join(f"mimeType='{m}'" for m in SUPPORTED_MIME_TYPES)
+        query = f"({mime_filter}) and trashed=false"
+        all_files = []
+        page_token = None
+        while True:
+            results = (
+                service.files()
+                .list(
+                    q=query,
+                    pageSize=100,
+                    fields="nextPageToken, files(id, name, mimeType, modifiedTime, webViewLink)",
+                    includeItemsFromAllDrives=True,
+                    supportsAllDrives=True,
+                    corpora="allDrives",
+                    pageToken=page_token,
+                )
+                .execute()
+            )
+            all_files.extend(results.get("files", []))
+            page_token = results.get("nextPageToken")
+            if not page_token:
+                break
+        return all_files
+
+    # Recurse into subfolders
+    all_files = []
+    folders_to_scan = [folder_id]
+    while folders_to_scan:
+        current = folders_to_scan.pop()
+        all_files.extend(_list_files_in_folder(service, current))
+        folders_to_scan.extend(_list_subfolders(service, current))
     return all_files
 
 
