@@ -69,7 +69,7 @@ def logout():
 # -----------------------------------------------------------------------------
 # 4. INDEX BUILDER (runs once for the entire app, shared across all sessions)
 # -----------------------------------------------------------------------------
-@st.cache_resource(show_spinner=False)
+@st.cache_resource(show_spinner="Indexing Google Drive documents... (first load only, please wait)")
 def _build_global_index():
     """Builds the vector index once and caches it across all user sessions."""
     credentials = google_auth.get_credentials()
@@ -96,14 +96,11 @@ def _build_global_index():
 
 
 def ensure_index_built():
-    status = st.session_state.memory_index_status
-    if status is not None and status != "building":
+    if st.session_state.memory_index is not None:
         return
 
-    st.session_state.memory_index_status = "building"
     try:
-        with st.spinner("Loading document index..."):
-            index, file_names, chunk_count = _build_global_index()
+        index, file_names, chunk_count = _build_global_index()
 
         if index is None:
             st.session_state.memory_index_status = "empty"
@@ -164,9 +161,7 @@ CHAT_PAGE_CSS = """
 def page_ask_otter():
     st.markdown(CHAT_PAGE_CSS, unsafe_allow_html=True)
 
-    status = st.session_state.memory_index_status
-    if status is None or status == "building":
-        ensure_index_built()
+    ensure_index_built()
 
     # Sidebar
     with st.sidebar:
