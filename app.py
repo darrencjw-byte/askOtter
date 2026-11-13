@@ -69,13 +69,19 @@ def logout():
 # -----------------------------------------------------------------------------
 # 4. INDEX BUILDER (runs once for the entire app, shared across all sessions)
 # -----------------------------------------------------------------------------
-@st.cache_resource(show_spinner="Indexing Google Drive documents... (first load only, please wait)")
+@st.cache_resource(show_spinner=False)
 def _build_global_index():
     """Builds the vector index once and caches it across all user sessions."""
+    import logging
+    logger = logging.getLogger("askotter")
+    logging.basicConfig(level=logging.INFO)
+
     credentials = google_auth.get_credentials()
 
     gdrive_url = os.getenv("GDRIVE_URL", "")
+    logger.info(f"Listing Drive files (folder: {gdrive_url or 'all'})")
     drive_files = drive_sync.list_files(credentials, folder_url=gdrive_url or None)
+    logger.info(f"Found {len(drive_files)} files")
 
     if not drive_files:
         return None, [], 0
@@ -86,12 +92,15 @@ def _build_global_index():
     service = drive_sync._build_service("drive", "v3", credentials)
     in_memory_files = []
     file_names = []
-    for f in drive_files:
+    for i, f in enumerate(drive_files, 1):
+        logger.info(f"Downloading ({i}/{len(drive_files)}): {f['name']}")
         content, final_name = drive_sync.download_file(credentials, f["id"], f["mimeType"], f["name"], service=service)
         in_memory_files.append((final_name, content))
         file_names.append(final_name)
 
+    logger.info("Building vector index...")
     index, chunk_count = rag_engine.build_index_from_memory(in_memory_files)
+    logger.info(f"Index built: {chunk_count} chunks from {len(drive_files)} files")
     return index, file_names, chunk_count
 
 
@@ -100,7 +109,10 @@ def ensure_index_built():
         return
 
     try:
-        index, file_names, chunk_count = _build_global_index()
+        with st.status("Building document index...", expanded=True) as status:
+            status.write("⏳ Fetching files from Google Drive and building embeddings...")
+            status.write("This only happens once — subsequent visits will be instant.")
+            index, file_names, chunk_count = _build_global_index()
 
         if index is None:
             st.session_state.memory_index_status = "empty"
