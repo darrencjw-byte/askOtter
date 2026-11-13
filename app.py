@@ -44,6 +44,7 @@ def login_screen():
     with col2:
         st.markdown("## 🦦 AskOtter Portal Access")
         st.caption("Public Sector AI Assistant — enter the access password to continue")
+        st.info("🔑 **Access Password:** `CFS@2027`")
 
         with st.form("login_form"):
             password_input = st.text_input("Enter Access Password", type="password")
