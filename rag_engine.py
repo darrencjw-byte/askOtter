@@ -85,8 +85,8 @@ def _configure_models():
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise ValueError("OPENAI_API_KEY is not set.")
-    Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small", api_key=api_key, embed_batch_size=50)
-    Settings.llm = OpenAI(model="gpt-4o-mini", api_key=api_key)
+    Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-large", api_key=api_key, embed_batch_size=50)
+    Settings.llm = OpenAI(model="gpt-4o", api_key=api_key)
     Settings.node_parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
 
 

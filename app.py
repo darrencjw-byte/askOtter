@@ -196,7 +196,7 @@ def page_ask_otter():
         }
         status_label = status_map.get(st.session_state.memory_index_status, "Not started")
         st.markdown(f"**Index Status:** `{status_label}`")
-        st.markdown("**Model:** `OpenAI gpt-4o-mini / text-embedding-3-small`")
+        st.markdown("**Model:** `OpenAI gpt-4o / text-embedding-3-large`")
 
     has_history = len(st.session_state.messages) > 0
 
@@ -385,8 +385,8 @@ def page_about_us():
     | **Repo Slug** | `askOtter` |
     | **Deployment Runtime** | Streamlit Community Cloud |
     | **Submission Portal** | LaunchPad |
-    | **LLM** | OpenAI `gpt-4o-mini` |
-    | **Embedding Model** | OpenAI `text-embedding-3-small` (1536 dimensions) |
+    | **LLM** | OpenAI `gpt-4o` |
+    | **Embedding Model** | OpenAI `text-embedding-3-large` (3072 dimensions) |
     | **Vector Store** | Qdrant (in-memory) |
     | **RAG Framework** | LlamaIndex |
     | **Chunk Size** | 512 tokens, 50-token overlap |
@@ -424,11 +424,11 @@ def page_methodology():
     | 2. Data Ingestion | Google Drive API v3 | `google-api-python-client` | Fetches documents from configured folder recursively using owner's stored refresh token |
     | 3. Per-Document Parsing | File Loaders | LlamaIndex `SimpleDirectoryReader` + `llama-index-readers-file` | Each document is parsed individually to preserve file name and page-level metadata |
     | 4. Chunking | Sentence Splitter | LlamaIndex `SentenceSplitter` | Splits each document into 512-token overlapping chunks (50-token overlap) |
-    | 5. Embedding | Vector Encoding | OpenAI `text-embedding-3-small` | Converts each chunk into a 1536-dimensional vector (batches of 50) |
+    | 5. Embedding | Vector Encoding | OpenAI `text-embedding-3-large` | Converts each chunk into a 3072-dimensional vector (batches of 50) |
     | 6. Indexing | Vector Store | Qdrant (in-memory) | Stores all vectors in a single shared index, cached globally via `st.cache_resource` |
     | 7. Retrieval | Similarity Search | LlamaIndex `VectorStoreIndex` | Finds top-6 most relevant chunks via cosine similarity (top-20 for summary queries) |
     | 8. Augmentation | Context Assembly | Custom prompt template | Retrieved passages are labelled with source info and assembled into a grounding context |
-    | 9. Generation | LLM Synthesis | OpenAI `gpt-4o-mini` | Strict RAG prompt enforces answering only from context, with citations |
+    | 9. Generation | LLM Synthesis | OpenAI `gpt-4o` | Strict RAG prompt enforces answering only from context, with citations |
     | 10. Citation | Source Attribution | Post-processing | Extracts deduplicated document name, page number, and snippet for each source |
     """)
 
@@ -507,7 +507,7 @@ def page_methodology():
               ▼
     ┌─────────────────────┐
     │  Generate Embeddings │◄──── OpenAI text-embedding-
-    │  (batches of 50)     │      3-small (1536-dim)
+    │  (batches of 50)     │      3-large (3072-dim)
     └─────────┬───────────┘
               │
               ▼
@@ -564,7 +564,7 @@ def page_methodology():
     │  ┌────────────────────┐                  │
     │  │ Embed Query into   │◄─ Same model:    │
     │  │ Vector             │   text-embedding- │
-    │  └─────────┬──────────┘   3-small        │
+    │  └─────────┬──────────┘   3-large        │
     │            │                              │
     │            ▼                              │
     │  ┌────────────────────┐                  │
@@ -597,7 +597,7 @@ def page_methodology():
     │  ┌────────────────────┐                  │
     │  │ Strict RAG Prompt: │                  │
     │  │ "Answer ONLY from  │◄─ OpenAI        │
-    │  │  retrieved context. │   gpt-4o-mini   │
+    │  │  retrieved context. │   gpt-4o   │
     │  │  Cite your sources. │                  │
     │  │  Say 'not found' if │                  │
     │  │  context is lacking."│                 │
@@ -651,8 +651,8 @@ def page_methodology():
         | Component | Technology |
         |-----------|------------|
         | Frontend & Hosting | Streamlit Community Cloud |
-        | LLM | OpenAI `gpt-4o-mini` |
-        | Embeddings | OpenAI `text-embedding-3-small` (1536-dim) |
+        | LLM | OpenAI `gpt-4o` |
+        | Embeddings | OpenAI `text-embedding-3-large` (3072-dim) |
         | Vector Store | Qdrant (in-memory) |
         | RAG Framework | LlamaIndex |
         | Document Parsing | `llama-index-readers-file`, `pypdf`, `docx2txt` |
