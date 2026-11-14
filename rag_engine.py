@@ -86,28 +86,26 @@ PLATFORM_API_KEY = os.getenv("PLATFORM_API_KEY", "")
 
 
 def _configure_models():
-    api_key = PLATFORM_API_KEY or os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise ValueError("PLATFORM_API_KEY (or OPENAI_API_KEY) is not set.")
-    api_base = PLATFORM_API_BASE
-    logger.info(f"Configuring models — base: {api_base}, key: {api_key[:12]}...")
+    openai_key = os.getenv("OPENAI_API_KEY")
+    platform_key = PLATFORM_API_KEY
+    if not openai_key:
+        raise ValueError("OPENAI_API_KEY is not set.")
 
-    import httpx
-    http_client = httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0))
-
+    # Embeddings: direct OpenAI (PlatformAI is not reachable from Streamlit Cloud)
     Settings.embed_model = OpenAIEmbedding(
         model="text-embedding-3-large",
-        api_key=api_key,
-        api_base=api_base,
-        embed_batch_size=5,
-        http_client=http_client,
+        api_key=openai_key,
+        embed_batch_size=50,
     )
-    Settings.llm = OpenAI(
-        model="azure.claude-sonnet-5-5",
-        api_key=api_key,
-        api_base=api_base,
-        http_client=http_client,
-    )
+
+    # LLM: PlatformAI for Claude Sonnet, fallback to OpenAI gpt-4o
+    if platform_key:
+        logger.info("LLM: Claude Sonnet 5.5 via PlatformAI")
+        Settings.llm = OpenAI(model="azure.claude-sonnet-5-5", api_key=platform_key, api_base=PLATFORM_API_BASE)
+    else:
+        logger.info("LLM: gpt-4o via OpenAI (PLATFORM_API_KEY not set)")
+        Settings.llm = OpenAI(model="gpt-4o", api_key=openai_key)
+
     Settings.node_parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
 
 
