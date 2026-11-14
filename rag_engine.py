@@ -1,8 +1,11 @@
-"""Real RAG pipeline: document ingestion, Qdrant vector storage, LlamaIndex retrieval."""
+"""Real RAG pipeline: per-document indexing for accuracy."""
 import os
 import stat
 import tempfile
+import logging
 from pathlib import Path
+
+logger = logging.getLogger("askotter")
 
 # Set NLTK data path BEFORE any imports that might trigger NLTK
 _nltk_dir = os.path.join(tempfile.gettempdir(), "nltk_private")
@@ -51,11 +54,16 @@ def _configure_models():
         raise ValueError("OPENAI_API_KEY is not set.")
     Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-small", api_key=api_key, embed_batch_size=50)
     Settings.llm = OpenAI(model="gpt-4o-mini", api_key=api_key)
-    Settings.node_parser = SentenceSplitter(chunk_size=2048, chunk_overlap=200)
+    Settings.node_parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
 
 
 def build_index_from_memory(files: list[tuple[str, bytes]]):
-    """Builds an in-memory vector index from file bytes. Returns (index, chunk_count)."""
+    """Builds an in-memory vector index, processing each document individually.
+
+    Each file is parsed and chunked separately so document boundaries and
+    metadata (file_name, page_label) are preserved accurately. All chunks
+    are then embedded and added to a single shared Qdrant index.
+    """
     _ensure_nltk()
 
     if not files:
@@ -63,39 +71,58 @@ def build_index_from_memory(files: list[tuple[str, bytes]]):
 
     _configure_models()
 
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_paths = []
-        for name, content in files:
+    all_nodes = []
+
+    for i, (name, content) in enumerate(files, 1):
+        logger.info(f"Parsing document ({i}/{len(files)}): {name}")
+        with tempfile.TemporaryDirectory() as tmp_dir:
             dest = Path(tmp_dir) / name
             with open(dest, "wb") as out:
                 out.write(content)
-            tmp_paths.append(str(dest))
-        documents = SimpleDirectoryReader(input_files=tmp_paths).load_data()
+            try:
+                documents = SimpleDirectoryReader(input_files=[str(dest)]).load_data()
+            except Exception as exc:
+                logger.warning(f"Skipping {name}: {exc}")
+                continue
 
-    nodes = Settings.node_parser.get_nodes_from_documents(documents)
+        nodes = Settings.node_parser.get_nodes_from_documents(documents)
+        logger.info(f"  → {len(documents)} pages, {len(nodes)} chunks")
+        all_nodes.extend(nodes)
 
+    if not all_nodes:
+        raise ValueError("No content could be extracted from the uploaded files.")
+
+    logger.info(f"Embedding {len(all_nodes)} total chunks across {len(files)} documents...")
     qdrant_client = QdrantClient(location=":memory:")
     vector_store = QdrantVectorStore(client=qdrant_client, collection_name=COLLECTION_NAME)
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
-    index = VectorStoreIndex(nodes, storage_context=storage_context, show_progress=True)
+    index = VectorStoreIndex(all_nodes, storage_context=storage_context, show_progress=True)
 
-    return index, len(nodes)
+    return index, len(all_nodes)
 
 
-def query_index(index, question: str, top_k: int = 4) -> dict:
+def query_index(index, question: str, top_k: int = 6) -> dict:
     """Runs a grounded query against an in-memory index."""
     _configure_models()
     query_engine = index.as_query_engine(similarity_top_k=top_k)
     response = query_engine.query(question)
 
     sources = []
+    seen = set()
     for node in response.source_nodes:
         metadata = node.node.metadata or {}
+        title = metadata.get("file_name", "Unknown document")
+        page = metadata.get("page_label", "—")
+        snippet = node.node.get_content()[:280].strip().replace("\n", " ")
+        key = (title, page, snippet[:80])
+        if key in seen:
+            continue
+        seen.add(key)
         sources.append(
             {
-                "title": metadata.get("file_name", "Unknown document"),
-                "page": metadata.get("page_label", "—"),
-                "snippet": node.node.get_content()[:280].strip().replace("\n", " "),
+                "title": title,
+                "page": page,
+                "snippet": snippet,
                 "score": round(node.score, 3) if node.score is not None else None,
             }
         )
