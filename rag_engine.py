@@ -38,12 +38,31 @@ def _ensure_nltk():
                 pass
     _nltk_ready = True
 
-from llama_index.core import Settings, SimpleDirectoryReader, StorageContext, VectorStoreIndex
+from llama_index.core import Settings, SimpleDirectoryReader, StorageContext, VectorStoreIndex, PromptTemplate
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai import OpenAI
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
+
+RAG_SYSTEM_PROMPT = PromptTemplate(
+    "You are AskOtter, a public sector document assistant. Your task is to "
+    "answer questions accurately using ONLY the context passages retrieved "
+    "from the user's indexed documents.\n\n"
+    "STRICT RULES:\n"
+    "1. ONLY use information from the context below. Do NOT use your training data.\n"
+    "2. If the context does not contain enough information to answer, say "
+    "\"I could not find sufficient information in the indexed documents to answer this question.\"\n"
+    "3. Always cite which document and page the information comes from.\n"
+    "4. Be precise and concise. Quote directly from the source when possible.\n"
+    "5. If asked to list documents, list ALL documents mentioned in the context.\n\n"
+    "-----\n"
+    "CONTEXT FROM RETRIEVED DOCUMENTS:\n"
+    "{context_str}\n"
+    "-----\n\n"
+    "USER QUESTION: {query_str}\n\n"
+    "ANSWER (grounded in the context above):"
+)
 
 COLLECTION_NAME = "ask_otter_docs"
 
@@ -102,11 +121,34 @@ def build_index_from_memory(files: list[tuple[str, bytes]]):
 
 
 def query_index(index, question: str, top_k: int = 6) -> dict:
-    """Runs a grounded query against an in-memory index."""
+    """RAG query: retrieve relevant chunks, then generate a grounded answer."""
     _configure_models()
-    query_engine = index.as_query_engine(similarity_top_k=top_k)
+
+    # Step 1: RETRIEVE — find the most relevant chunks via vector similarity
+    retriever = index.as_retriever(similarity_top_k=top_k)
+    retrieved_nodes = retriever.retrieve(question)
+
+    logger.info(f"RAG retrieval: {len(retrieved_nodes)} chunks for query: {question[:80]}...")
+    for node in retrieved_nodes:
+        meta = node.node.metadata or {}
+        logger.info(f"  → [{meta.get('file_name', '?')} p.{meta.get('page_label', '?')}] score={node.score:.3f}")
+
+    # Step 2: AUGMENT — build the context string from retrieved passages
+    context_parts = []
+    for i, node in enumerate(retrieved_nodes, 1):
+        meta = node.node.metadata or {}
+        source_label = f"[Source {i}: {meta.get('file_name', 'Unknown')} — Page {meta.get('page_label', '—')}]"
+        context_parts.append(f"{source_label}\n{node.node.get_content()}")
+    context_str = "\n\n".join(context_parts)
+
+    # Step 3: GENERATE — send the grounded prompt to the LLM
+    query_engine = index.as_query_engine(
+        similarity_top_k=top_k,
+        text_qa_template=RAG_SYSTEM_PROMPT,
+    )
     response = query_engine.query(question)
 
+    # Step 4: Extract citation sources
     sources = []
     seen = set()
     for node in response.source_nodes:
