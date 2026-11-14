@@ -44,14 +44,14 @@ def login_screen():
     with col2:
         st.markdown("## 🦦 AskOtter Portal Access")
         st.caption("Public Sector AI Assistant — enter the access password to continue")
-        st.info("🔑 **Access Password:** `CFS@2027`")
+        st.info("🔑 **Access Password:** `admin123`")
 
         with st.form("login_form"):
             password_input = st.text_input("Enter Access Password", type="password")
             submit_button = st.form_submit_button("Authenticate", use_container_width=True)
 
             if submit_button:
-                target_password = os.getenv("APP_PASSWORD", "CFS@2027")
+                target_password = os.getenv("APP_PASSWORD", "admin123")
                 if password_input == target_password:
                     st.session_state.authenticated = True
                     st.success("Authentication successful! Redirecting...")
