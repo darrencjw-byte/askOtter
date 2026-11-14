@@ -90,8 +90,24 @@ def _configure_models():
     if not api_key:
         raise ValueError("PLATFORM_API_KEY (or OPENAI_API_KEY) is not set.")
     api_base = PLATFORM_API_BASE
-    Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-large", api_key=api_key, api_base=api_base, embed_batch_size=10)
-    Settings.llm = OpenAI(model="azure.claude-sonnet-5-5", api_key=api_key, api_base=api_base)
+    logger.info(f"Configuring models — base: {api_base}, key: {api_key[:12]}...")
+
+    import httpx
+    http_client = httpx.Client(timeout=httpx.Timeout(60.0, connect=10.0))
+
+    Settings.embed_model = OpenAIEmbedding(
+        model="text-embedding-3-large",
+        api_key=api_key,
+        api_base=api_base,
+        embed_batch_size=5,
+        http_client=http_client,
+    )
+    Settings.llm = OpenAI(
+        model="azure.claude-sonnet-5-5",
+        api_key=api_key,
+        api_base=api_base,
+        http_client=http_client,
+    )
     Settings.node_parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
 
 
