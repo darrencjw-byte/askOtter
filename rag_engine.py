@@ -45,7 +45,7 @@ from llama_index.llms.openai import OpenAI
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 
-RAG_SYSTEM_PROMPT = PromptTemplate(
+_RAG_PROMPT_TEMPLATE = (
     "You are AskOtter, a public sector document assistant. Your task is to "
     "answer questions accurately using ONLY the context passages retrieved "
     "from the user's indexed documents.\n\n"
@@ -55,7 +55,8 @@ RAG_SYSTEM_PROMPT = PromptTemplate(
     "\"I could not find sufficient information in the indexed documents to answer this question.\"\n"
     "3. Always cite which document and page the information comes from.\n"
     "4. Be precise and concise. Quote directly from the source when possible.\n"
-    "5. If asked to list documents, list ALL documents mentioned in the context.\n\n"
+    "5. If asked to list documents or files, use the COMPLETE FILE LIST below — not just files in the retrieved context.\n\n"
+    "{file_list_section}"
     "-----\n"
     "CONTEXT FROM RETRIEVED DOCUMENTS:\n"
     "{context_str}\n"
@@ -63,6 +64,15 @@ RAG_SYSTEM_PROMPT = PromptTemplate(
     "USER QUESTION: {query_str}\n\n"
     "ANSWER (grounded in the context above):"
 )
+
+
+def _build_rag_prompt(file_names: list[str] | None = None) -> PromptTemplate:
+    if file_names:
+        file_list = "\n".join(f"  - {name}" for name in file_names)
+        file_section = f"COMPLETE LIST OF ALL INDEXED FILES ({len(file_names)} files):\n{file_list}\n\n"
+    else:
+        file_section = ""
+    return PromptTemplate(_RAG_PROMPT_TEMPLATE.replace("{file_list_section}", file_section))
 
 COLLECTION_NAME = "ask_otter_docs"
 
@@ -129,14 +139,13 @@ def _is_broad_query(question: str) -> bool:
     return any(kw in q for kw in broad_keywords)
 
 
-def query_index(index, question: str, top_k: int = 6) -> dict:
+def query_index(index, question: str, top_k: int = 6, file_names: list[str] | None = None) -> dict:
     """RAG query: retrieve relevant chunks, then generate a grounded answer."""
     _configure_models()
 
-    # Use broader retrieval for summary/overview queries
     effective_top_k = 20 if _is_broad_query(question) else top_k
 
-    # Step 1: RETRIEVE — find the most relevant chunks via vector similarity
+    # Step 1: RETRIEVE — vector similarity search (clean query only, no file list noise)
     retriever = index.as_retriever(similarity_top_k=effective_top_k)
     retrieved_nodes = retriever.retrieve(question)
 
@@ -145,18 +154,13 @@ def query_index(index, question: str, top_k: int = 6) -> dict:
         meta = node.node.metadata or {}
         logger.info(f"  → [{meta.get('file_name', '?')} p.{meta.get('page_label', '?')}] score={node.score:.3f}")
 
-    # Step 2: AUGMENT — build the context string from retrieved passages
-    context_parts = []
-    for i, node in enumerate(retrieved_nodes, 1):
-        meta = node.node.metadata or {}
-        source_label = f"[Source {i}: {meta.get('file_name', 'Unknown')} — Page {meta.get('page_label', '—')}]"
-        context_parts.append(f"{source_label}\n{node.node.get_content()}")
-    context_str = "\n\n".join(context_parts)
+    # Step 2: AUGMENT — build context + file list in the LLM prompt (not in the search)
+    rag_prompt = _build_rag_prompt(file_names)
 
-    # Step 3: GENERATE — send the grounded prompt to the LLM
+    # Step 3: GENERATE — LLM answers using strict grounding prompt with file list
     query_engine = index.as_query_engine(
         similarity_top_k=effective_top_k,
-        text_qa_template=RAG_SYSTEM_PROMPT,
+        text_qa_template=rag_prompt,
     )
     response = query_engine.query(question)
 
