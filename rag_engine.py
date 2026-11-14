@@ -42,7 +42,6 @@ from llama_index.core import Settings, SimpleDirectoryReader, StorageContext, Ve
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai import OpenAI
-from llama_index.llms.openai_like import OpenAILike
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 
@@ -164,24 +163,24 @@ def query_index(index, question: str, top_k: int = 6, file_names: list[str] | No
 
     effective_top_k = 20 if _is_broad_query(question) else top_k
 
-    # Step 1: RETRIEVE — vector similarity search (clean query only, no file list noise)
+    # Step 1: RETRIEVE
+    logger.info(f"Step 1: Retrieving top-{effective_top_k} chunks for: {question[:80]}...")
     retriever = index.as_retriever(similarity_top_k=effective_top_k)
     retrieved_nodes = retriever.retrieve(question)
+    logger.info(f"Step 1 done: {len(retrieved_nodes)} chunks retrieved")
 
-    logger.info(f"RAG retrieval: {len(retrieved_nodes)} chunks (top_k={effective_top_k}) for: {question[:80]}...")
-    for node in retrieved_nodes:
-        meta = node.node.metadata or {}
-        logger.info(f"  → [{meta.get('file_name', '?')} p.{meta.get('page_label', '?')}] score={node.score:.3f}")
-
-    # Step 2: AUGMENT — build context + file list in the LLM prompt (not in the search)
+    # Step 2: AUGMENT
+    logger.info("Step 2: Building RAG prompt...")
     rag_prompt = _build_rag_prompt(file_names)
 
-    # Step 3: GENERATE — LLM answers using strict grounding prompt with file list
+    # Step 3: GENERATE
+    logger.info("Step 3: Sending to LLM (gpt-4o)...")
     query_engine = index.as_query_engine(
         similarity_top_k=effective_top_k,
         text_qa_template=rag_prompt,
     )
     response = query_engine.query(question)
+    logger.info("Step 3 done: LLM response received")
 
     # Step 4: Extract citation sources
     sources = []
