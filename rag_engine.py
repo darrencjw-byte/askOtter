@@ -120,15 +120,27 @@ def build_index_from_memory(files: list[tuple[str, bytes]]):
     return index, len(all_nodes)
 
 
+def _is_broad_query(question: str) -> bool:
+    """Detect queries that need broad coverage across all documents."""
+    q = question.lower()
+    broad_keywords = ["summarise", "summarize", "summary", "overview", "list all",
+                      "list document", "list my", "all documents", "all files",
+                      "key points", "main points", "what are the documents"]
+    return any(kw in q for kw in broad_keywords)
+
+
 def query_index(index, question: str, top_k: int = 6) -> dict:
     """RAG query: retrieve relevant chunks, then generate a grounded answer."""
     _configure_models()
 
+    # Use broader retrieval for summary/overview queries
+    effective_top_k = 20 if _is_broad_query(question) else top_k
+
     # Step 1: RETRIEVE — find the most relevant chunks via vector similarity
-    retriever = index.as_retriever(similarity_top_k=top_k)
+    retriever = index.as_retriever(similarity_top_k=effective_top_k)
     retrieved_nodes = retriever.retrieve(question)
 
-    logger.info(f"RAG retrieval: {len(retrieved_nodes)} chunks for query: {question[:80]}...")
+    logger.info(f"RAG retrieval: {len(retrieved_nodes)} chunks (top_k={effective_top_k}) for: {question[:80]}...")
     for node in retrieved_nodes:
         meta = node.node.metadata or {}
         logger.info(f"  → [{meta.get('file_name', '?')} p.{meta.get('page_label', '?')}] score={node.score:.3f}")
@@ -143,7 +155,7 @@ def query_index(index, question: str, top_k: int = 6) -> dict:
 
     # Step 3: GENERATE — send the grounded prompt to the LLM
     query_engine = index.as_query_engine(
-        similarity_top_k=top_k,
+        similarity_top_k=effective_top_k,
         text_qa_template=RAG_SYSTEM_PROMPT,
     )
     response = query_engine.query(question)
