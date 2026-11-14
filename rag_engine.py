@@ -42,6 +42,7 @@ from llama_index.core import Settings, SimpleDirectoryReader, StorageContext, Ve
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai import OpenAI
+from llama_index.llms.openai_like import OpenAILike
 from llama_index.vector_stores.qdrant import QdrantVectorStore
 from qdrant_client import QdrantClient
 
@@ -101,7 +102,12 @@ def _configure_models():
     # LLM: PlatformAI for Claude Sonnet, fallback to OpenAI gpt-4o
     if platform_key:
         logger.info("LLM: Claude Sonnet 5.5 via PlatformAI")
-        Settings.llm = OpenAI(model="azure.claude-sonnet-5-5", api_key=platform_key, api_base=PLATFORM_API_BASE)
+        Settings.llm = OpenAILike(
+            model="azure.claude-sonnet-5-5",
+            api_key=platform_key,
+            api_base=PLATFORM_API_BASE,
+            is_chat_model=True,
+        )
     else:
         logger.info("LLM: gpt-4o via OpenAI (PLATFORM_API_KEY not set)")
         Settings.llm = OpenAI(model="gpt-4o", api_key=openai_key)
