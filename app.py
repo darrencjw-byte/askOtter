@@ -212,16 +212,13 @@ def page_ask_otter():
         )
 
         st.markdown('<div class="askotter-suggestion-row">', unsafe_allow_html=True)
-        sug_col1, sug_col2, sug_col3 = st.columns(3)
+        sug_col1, sug_col2 = st.columns(2)
         suggestion_clicked = None
         with sug_col1:
             if st.button("Summarise my documents", use_container_width=True, key="sug_1"):
                 suggestion_clicked = "Summarise the key points across my imported documents."
         with sug_col2:
-            if st.button("Find a policy clause", use_container_width=True, key="sug_2"):
-                suggestion_clicked = "Find the clause or section that covers the main policy requirements."
-        with sug_col3:
-            if st.button("List document sources", use_container_width=True, key="sug_3"):
+            if st.button("List document sources", use_container_width=True, key="sug_2"):
                 suggestion_clicked = "List the documents that were imported and indexed in this session."
         st.markdown("</div>", unsafe_allow_html=True)
 
