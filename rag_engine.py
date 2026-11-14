@@ -99,18 +99,8 @@ def _configure_models():
         embed_batch_size=50,
     )
 
-    # LLM: PlatformAI for Claude Sonnet, fallback to OpenAI gpt-4o
-    if platform_key:
-        logger.info("LLM: Claude Sonnet 5.5 via PlatformAI")
-        Settings.llm = OpenAILike(
-            model="azure.claude-sonnet-5-5",
-            api_key=platform_key,
-            api_base=PLATFORM_API_BASE,
-            is_chat_model=True,
-        )
-    else:
-        logger.info("LLM: gpt-4o via OpenAI (PLATFORM_API_KEY not set)")
-        Settings.llm = OpenAI(model="gpt-4o", api_key=openai_key)
+    # LLM: OpenAI gpt-4o (PlatformAI is not reachable from Streamlit Cloud)
+    Settings.llm = OpenAI(model="gpt-4o", api_key=openai_key)
 
     Settings.node_parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
 
