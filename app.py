@@ -8,6 +8,7 @@ load_dotenv()
 import rag_engine
 import google_auth
 import drive_sync
+from page_explorer import page_document_explorer
 
 # -----------------------------------------------------------------------------
 # 1. APPLICATION & PAGE CONFIGURATION
@@ -33,6 +34,12 @@ def init_session_state():
         st.session_state.memory_index_status = None
     if "memory_index_error" not in st.session_state:
         st.session_state.memory_index_error = None
+    if "doc_stats" not in st.session_state:
+        st.session_state.doc_stats = []
+    if "quiz_history" not in st.session_state:
+        st.session_state.quiz_history = []
+    if "user_profile" not in st.session_state:
+        st.session_state.user_profile = None
 
 init_session_state()
 
@@ -84,7 +91,7 @@ def _build_global_index():
     logger.info(f"Found {len(drive_files)} files")
 
     if not drive_files:
-        return None, [], 0
+        return None, [], 0, []
 
     if not os.getenv("OPENAI_API_KEY"):
         raise ValueError("OPENAI_API_KEY is not set. Add it to your Streamlit Cloud secrets.")
@@ -99,9 +106,9 @@ def _build_global_index():
         file_names.append(final_name)
 
     logger.info("Building vector index...")
-    index, chunk_count = rag_engine.build_index_from_memory(in_memory_files)
+    index, chunk_count, doc_stats = rag_engine.build_index_from_memory(in_memory_files)
     logger.info(f"Index built: {chunk_count} chunks from {len(drive_files)} files")
-    return index, file_names, chunk_count
+    return index, file_names, chunk_count, doc_stats
 
 
 def ensure_index_built():
@@ -109,7 +116,7 @@ def ensure_index_built():
         return
 
     try:
-        index, file_names, chunk_count = _build_global_index()
+        index, file_names, chunk_count, doc_stats = _build_global_index()
 
         if index is None:
             st.session_state.memory_index_status = "empty"
@@ -117,6 +124,7 @@ def ensure_index_built():
 
         st.session_state.memory_index = index
         st.session_state["indexed_file_names"] = file_names
+        st.session_state["doc_stats"] = doc_stats
         st.session_state.memory_index_status = "ready"
     except Exception as exc:
         st.session_state.memory_index_status = "error"
@@ -257,7 +265,7 @@ def page_ask_otter():
                     if st.session_state.memory_index is None:
                         raise ValueError("No index available. The Google Drive may be empty or the import failed.")
                     file_names = st.session_state.get("indexed_file_names", [])
-                    result = rag_engine.query_index(st.session_state.memory_index, prompt, file_names=file_names)
+                    result = rag_engine.query_index(st.session_state.memory_index, prompt, file_names=file_names, user_profile=st.session_state.get("user_profile"))
                     assistant_response = result["answer"]
                     citations = result["sources"]
                 except ValueError as exc:
@@ -344,6 +352,37 @@ def page_about_us():
 
     st.markdown("---")
 
+    # --- Use Cases ---
+    st.markdown("### 🎯 Use Cases")
+    uc_col1, uc_col2 = st.columns(2)
+    with uc_col1:
+        st.markdown("""
+        **Use Case 1: Chat with Documents (RAG Q&A)**
+
+        Users ask natural language questions and receive grounded answers
+        with source citations. The RAG pipeline retrieves relevant passages
+        from the indexed documents and generates answers using OpenAI gpt-4o,
+        strictly constrained to the retrieved context.
+
+        - Strict RAG grounding — no hallucination from training data
+        - Adaptive retrieval: top-6 for specific queries, top-20 for summaries
+        - Expandable citation sources per answer
+        - Personalised responses based on user profile
+        """)
+    with uc_col2:
+        st.markdown("""
+        **Use Case 2: Document Explorer**
+
+        An interactive tool for exploring, searching, and testing knowledge
+        across the indexed documents — beyond simple Q&A.
+
+        - **Document Overview Dashboard**: Interactive data table and bar chart showing all indexed files with page and chunk counts
+        - **Smart Search**: Personalised search with document filters, adjustable result depth, and configurable response style
+        - **Knowledge Quiz**: Auto-generated quizzes grounded in document content with scoring and progress tracking
+        """)
+
+    st.markdown("---")
+
     # --- Features ---
     st.markdown("### ✨ Features")
     feat_col1, feat_col2, feat_col3 = st.columns(3)
@@ -358,20 +397,20 @@ def page_about_us():
         """)
     with feat_col2:
         st.markdown("""
-        **🔄 Automatic Indexing**
-        - Google Drive folder indexed on first load
-        - Per-document parsing with page-level metadata
-        - Recursive subfolder scanning
-        - Globally cached index (`st.cache_resource`)
-        - Re-sync button for on-demand refresh
+        **📊 Document Explorer**
+        - Interactive document overview with data table and charts
+        - Personalised Smart Search with filters and response styles
+        - Knowledge Quiz with auto-generated questions and scoring
+        - Document statistics and visualisations
         """)
     with feat_col3:
         st.markdown("""
-        **🔒 Secure & Stateless**
+        **🔒 Secure & Personalised**
         - Password-gated access
         - No data persisted server-side
         - Owner-scoped Drive credentials (refresh token)
         - In-memory vector store only
+        - Personalised responses based on user preferences
         """)
 
     st.markdown("---")
@@ -641,6 +680,67 @@ def page_methodology():
 
     st.markdown("---")
 
+    # --- Use Case 3: Document Explorer ---
+    st.markdown("### 📊 Use Case 3: Document Explorer")
+    st.markdown("""
+    The Document Explorer provides structured, interactive tools for analysing the indexed
+    knowledge base beyond simple Q&A — including dashboards, personalised search, and self-assessment quizzes.
+    """)
+
+    st.markdown("#### Flowchart")
+    st.code("""
+    ┌─────────────────────────────────────────────────────┐
+    │              DOCUMENT EXPLORER PAGE                  │
+    │                                                     │
+    │  ┌─────────────┐ ┌──────────────┐ ┌──────────────┐ │
+    │  │  Overview    │ │ Smart Search │ │ Knowledge    │ │
+    │  │  Dashboard   │ │              │ │ Quiz         │ │
+    │  └──────┬──────┘ └──────┬───────┘ └──────┬───────┘ │
+    └─────────┼───────────────┼────────────────┼──────────┘
+              │               │                │
+              ▼               ▼                ▼
+    ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+    │ Read doc_stats│  │ User fills   │  │ User selects │
+    │ from index   │  │ search form: │  │ topic +      │
+    │ metadata     │  │ • Documents  │  │ difficulty   │
+    └──────┬───────┘  │ • Query      │  └──────┬───────┘
+           │          │ • Depth (3-10)│         │
+           ▼          │ • Style      │         ▼
+    ┌──────────────┐  └──────┬───────┘  ┌──────────────┐
+    │ Display:     │         │          │ Retrieve     │
+    │ • Dataframe  │         ▼          │ topic chunks │
+    │ • Bar chart  │  ┌──────────────┐  └──────┬───────┘
+    │ • Metrics    │  │ Filtered RAG │         │
+    └──────────────┘  │ query with   │         ▼
+                      │ metadata     │  ┌──────────────┐
+                      │ filters      │  │ LLM generates│
+                      └──────┬───────┘  │ quiz as JSON │
+                             │          └──────┬───────┘
+                             ▼                 │
+                      ┌──────────────┐         ▼
+                      │ Personalised │  ┌──────────────┐
+                      │ answer with  │  │ User answers │
+                      │ citations    │  │ via st.radio │
+                      └──────────────┘  └──────┬───────┘
+                                               │
+                                               ▼
+                                        ┌──────────────┐
+                                        │ Score + store│
+                                        │ in history + │
+                                        │ progress     │
+                                        │ bar chart    │
+                                        └──────────────┘
+    """, language="text")
+
+    st.markdown("""
+    **Key details:**
+    - **Document Overview**: Displays an interactive `st.dataframe` (sortable, filterable) with file name, type, page count, and chunk count. Includes a bar chart of chunks per document and summary metrics.
+    - **Smart Search**: A personalised search form where users select specific documents, set result depth (3/6/10), and choose a response style. Uses metadata-filtered RAG retrieval so only selected documents are searched.
+    - **Knowledge Quiz**: Auto-generates multiple-choice questions grounded in document content. The LLM creates questions in structured JSON format. Users answer via interactive radio buttons, then see their score with explanations citing source documents. Score history is tracked and visualised as a progress chart.
+    """)
+
+    st.markdown("---")
+
     # --- Implementation Details ---
     st.markdown("### 🔧 Implementation Details")
 
@@ -680,11 +780,12 @@ if not st.session_state.authenticated:
     login_screen()
 else:
     p_chat = st.Page(page_ask_otter, title="AskOtter Chat", icon="💬", default=True)
+    p_explorer = st.Page(page_document_explorer, title="Document Explorer", icon="📊")
     p_about = st.Page(page_about_us, title="About Us", icon="ℹ️")
     p_method = st.Page(page_methodology, title="Methodology", icon="⚙️")
 
     pg = st.navigation({
-        "Core Assistant": [p_chat],
+        "Core Assistant": [p_chat, p_explorer],
         "Documentation": [p_about, p_method],
     })
 

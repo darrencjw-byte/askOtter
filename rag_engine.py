@@ -1,4 +1,5 @@
-"""Real RAG pipeline: per-document indexing for accuracy."""
+"""Real RAG pipeline: per-document indexing, filtered queries, quiz generation."""
+import json
 import os
 import stat
 import tempfile
@@ -40,6 +41,7 @@ def _ensure_nltk():
 
 from llama_index.core import Settings, SimpleDirectoryReader, StorageContext, VectorStoreIndex, PromptTemplate
 from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.vector_stores import MetadataFilter, MetadataFilters, FilterCondition
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai import OpenAI
 from llama_index.vector_stores.qdrant import QdrantVectorStore
@@ -54,6 +56,7 @@ _RAG_PROMPT_TEMPLATE = (
     "- You use LlamaIndex as the RAG framework with Qdrant as the in-memory vector store.\n"
     "- You are deployed on Streamlit Community Cloud.\n"
     "- Your documents are sourced from a pre-configured Google Drive folder.\n\n"
+    "{personalisation_section}"
     "RULES:\n"
     "1. For questions about document CONTENT (facts, policies, procedures): "
     "answer using ONLY the retrieved context below. Cite document name and page.\n"
@@ -77,17 +80,39 @@ _RAG_PROMPT_TEMPLATE = (
 )
 
 
-def _build_rag_prompt(file_names: list[str] | None = None) -> PromptTemplate:
+def _build_rag_prompt(file_names: list[str] | None = None, user_profile: dict | None = None) -> PromptTemplate:
     if file_names:
         sorted_names = sorted(file_names)
         file_list = "\n".join(f"  - {name}" for name in sorted_names)
         file_section = f"COMPLETE LIST OF ALL INDEXED FILES ({len(sorted_names)} files, sorted):\n{file_list}\n\n"
     else:
         file_section = ""
-    return PromptTemplate(_RAG_PROMPT_TEMPLATE.replace("{file_list_section}", file_section))
+
+    if user_profile:
+        parts = ["USER PROFILE (personalise your response accordingly):\n"]
+        if user_profile.get("name"):
+            parts.append(f"- Name: {user_profile['name']}\n")
+        if user_profile.get("role"):
+            parts.append(f"- Role: {user_profile['role']}\n")
+        if user_profile.get("experience"):
+            parts.append(f"- AI/LLM Experience Level: {user_profile['experience']}\n")
+        if user_profile.get("answer_style"):
+            parts.append(f"- Preferred Answer Style: {user_profile['answer_style']}\n")
+        if user_profile.get("topics"):
+            parts.append(f"- Topics of Interest: {', '.join(user_profile['topics'])}\n")
+        parts.append("Adjust your tone, detail level, and vocabulary to match this user's profile.\n\n")
+        personalisation_section = "".join(parts)
+    else:
+        personalisation_section = ""
+
+    prompt_text = _RAG_PROMPT_TEMPLATE.replace(
+        "{file_list_section}", file_section
+    ).replace(
+        "{personalisation_section}", personalisation_section
+    )
+    return PromptTemplate(prompt_text)
 
 COLLECTION_NAME = "ask_otter_docs"
-
 
 PLATFORM_API_BASE = os.getenv("PLATFORM_API_BASE", "https://api.ai.tech.gov.sg/platform/models/v1")
 PLATFORM_API_KEY = os.getenv("PLATFORM_API_KEY", "")
@@ -95,29 +120,36 @@ PLATFORM_API_KEY = os.getenv("PLATFORM_API_KEY", "")
 
 def _configure_models():
     openai_key = os.getenv("OPENAI_API_KEY")
-    platform_key = PLATFORM_API_KEY
     if not openai_key:
         raise ValueError("OPENAI_API_KEY is not set.")
 
-    # Embeddings: direct OpenAI (PlatformAI is not reachable from Streamlit Cloud)
     Settings.embed_model = OpenAIEmbedding(
         model="text-embedding-3-large",
         api_key=openai_key,
         embed_batch_size=50,
     )
 
-    # LLM: OpenAI gpt-4o (PlatformAI is not reachable from Streamlit Cloud)
     Settings.llm = OpenAI(model="gpt-4o", api_key=openai_key)
 
     Settings.node_parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
 
 
+def _file_type_from_name(name: str) -> str:
+    ext = Path(name).suffix.lower()
+    return {
+        ".pdf": "PDF",
+        ".docx": "DOCX",
+        ".xlsx": "XLSX",
+        ".txt": "TXT",
+        ".md": "Markdown",
+    }.get(ext, ext.upper().lstrip(".") or "Unknown")
+
+
 def build_index_from_memory(files: list[tuple[str, bytes]]):
     """Builds an in-memory vector index, processing each document individually.
 
-    Each file is parsed and chunked separately so document boundaries and
-    metadata (file_name, page_label) are preserved accurately. All chunks
-    are then embedded and added to a single shared Qdrant index.
+    Returns (index, chunk_count, doc_stats) where doc_stats is a list of dicts
+    with per-document metadata: file_name, file_type, page_count, chunk_count.
     """
     _ensure_nltk()
 
@@ -127,6 +159,7 @@ def build_index_from_memory(files: list[tuple[str, bytes]]):
     _configure_models()
 
     all_nodes = []
+    doc_stats = []
 
     for i, (name, content) in enumerate(files, 1):
         logger.info(f"Parsing document ({i}/{len(files)}): {name}")
@@ -144,6 +177,13 @@ def build_index_from_memory(files: list[tuple[str, bytes]]):
         logger.info(f"  → {len(documents)} pages, {len(nodes)} chunks")
         all_nodes.extend(nodes)
 
+        doc_stats.append({
+            "file_name": name,
+            "file_type": _file_type_from_name(name),
+            "page_count": len(documents),
+            "chunk_count": len(nodes),
+        })
+
     if not all_nodes:
         raise ValueError("No content could be extracted from the uploaded files.")
 
@@ -153,7 +193,7 @@ def build_index_from_memory(files: list[tuple[str, bytes]]):
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
     index = VectorStoreIndex(all_nodes, storage_context=storage_context, show_progress=True)
 
-    return index, len(all_nodes)
+    return index, len(all_nodes), doc_stats
 
 
 def _is_broad_query(question: str) -> bool:
@@ -165,23 +205,20 @@ def _is_broad_query(question: str) -> bool:
     return any(kw in q for kw in broad_keywords)
 
 
-def query_index(index, question: str, top_k: int = 6, file_names: list[str] | None = None) -> dict:
+def query_index(index, question: str, top_k: int = 6, file_names: list[str] | None = None, user_profile: dict | None = None) -> dict:
     """RAG query: retrieve relevant chunks, then generate a grounded answer."""
     _configure_models()
 
     effective_top_k = 20 if _is_broad_query(question) else top_k
 
-    # Step 1: RETRIEVE
     logger.info(f"Step 1: Retrieving top-{effective_top_k} chunks for: {question[:80]}...")
     retriever = index.as_retriever(similarity_top_k=effective_top_k)
     retrieved_nodes = retriever.retrieve(question)
     logger.info(f"Step 1 done: {len(retrieved_nodes)} chunks retrieved")
 
-    # Step 2: AUGMENT
     logger.info("Step 2: Building RAG prompt...")
-    rag_prompt = _build_rag_prompt(file_names)
+    rag_prompt = _build_rag_prompt(file_names, user_profile=user_profile)
 
-    # Step 3: GENERATE
     logger.info("Step 3: Sending to LLM (gpt-4o)...")
     query_engine = index.as_query_engine(
         similarity_top_k=effective_top_k,
@@ -190,7 +227,6 @@ def query_index(index, question: str, top_k: int = 6, file_names: list[str] | No
     response = query_engine.query(question)
     logger.info("Step 3 done: LLM response received")
 
-    # Step 4: Extract citation sources
     sources = []
     seen = set()
     for node in response.source_nodes:
@@ -212,3 +248,109 @@ def query_index(index, question: str, top_k: int = 6, file_names: list[str] | No
         )
 
     return {"answer": str(response), "sources": sources}
+
+
+def filtered_query(index, question: str, file_filter: list[str], top_k: int = 6, user_profile: dict | None = None) -> dict:
+    """RAG query restricted to specific documents by file name."""
+    _configure_models()
+
+    filters = MetadataFilters(
+        filters=[MetadataFilter(key="file_name", value=fn) for fn in file_filter],
+        condition=FilterCondition.OR,
+    )
+
+    logger.info(f"Filtered query (files={file_filter}): {question[:80]}...")
+    retriever = index.as_retriever(similarity_top_k=top_k, filters=filters)
+    retrieved_nodes = retriever.retrieve(question)
+    logger.info(f"Filtered retrieval: {len(retrieved_nodes)} chunks")
+
+    rag_prompt = _build_rag_prompt(file_names=file_filter, user_profile=user_profile)
+    query_engine = index.as_query_engine(
+        similarity_top_k=top_k,
+        text_qa_template=rag_prompt,
+        node_postprocessors=[],
+    )
+    response = query_engine.query(question)
+
+    sources = []
+    seen = set()
+    for node in response.source_nodes:
+        metadata = node.node.metadata or {}
+        title = metadata.get("file_name", "Unknown document")
+        page = metadata.get("page_label", "—")
+        snippet = node.node.get_content()[:280].strip().replace("\n", " ")
+        key = (title, page, snippet[:80])
+        if key in seen:
+            continue
+        seen.add(key)
+        sources.append({
+            "title": title,
+            "page": page,
+            "snippet": snippet,
+            "score": round(node.score, 3) if node.score is not None else None,
+        })
+
+    return {"answer": str(response), "sources": sources}
+
+
+_QUIZ_PROMPT = """Based on the following document excerpts, generate exactly {num_questions} multiple-choice questions to test understanding of the topic "{topic}".
+
+DOCUMENT EXCERPTS:
+{context}
+
+Return ONLY a valid JSON array. Each element must be an object with these exact keys:
+- "question": the question text
+- "options": an array of exactly 4 answer strings labelled A through D
+- "correct": the letter of the correct answer ("A", "B", "C", or "D")
+- "explanation": a brief explanation of why the correct answer is right, citing the source
+- "source": the file name the question is based on
+
+Example format:
+[{{"question": "What is X?", "options": ["A. Option 1", "B. Option 2", "C. Option 3", "D. Option 4"], "correct": "B", "explanation": "Because...", "source": "file.pdf"}}]
+
+Return ONLY the JSON array, no other text."""
+
+
+def generate_quiz(index, topic: str, num_questions: int = 5) -> list[dict]:
+    """Generate multiple-choice quiz questions grounded in indexed documents."""
+    _configure_models()
+
+    retriever = index.as_retriever(similarity_top_k=15)
+    nodes = retriever.retrieve(topic)
+
+    if not nodes:
+        return []
+
+    context_parts = []
+    for node in nodes:
+        meta = node.node.metadata or {}
+        label = f"[{meta.get('file_name', 'Unknown')} — Page {meta.get('page_label', '?')}]"
+        context_parts.append(f"{label}\n{node.node.get_content()}")
+    context = "\n\n".join(context_parts)
+
+    prompt = _QUIZ_PROMPT.format(
+        num_questions=num_questions,
+        topic=topic,
+        context=context,
+    )
+
+    llm = Settings.llm
+    response = llm.complete(prompt)
+    raw = str(response).strip()
+
+    # Strip markdown fences if present
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+        if raw.endswith("```"):
+            raw = raw[:-3]
+        raw = raw.strip()
+
+    try:
+        questions = json.loads(raw)
+        if not isinstance(questions, list):
+            raise ValueError("Response is not a list")
+        return questions[:num_questions]
+    except (json.JSONDecodeError, ValueError) as exc:
+        logger.warning(f"Quiz generation JSON parse failed: {exc}")
+        logger.debug(f"Raw response: {raw[:500]}")
+        return []
