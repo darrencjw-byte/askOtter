@@ -101,13 +101,12 @@ def _render_search_tab():
         index = st.session_state["memory_index"]
         with st.spinner("Searching documents..."):
             try:
+                styled_query = f"[Respond in {style.lower()} style] {query}"
                 result = rag_engine.filtered_query(
                     index=index,
-                    question=query,
-                    file_filter=selected_docs if selected_docs else None,
+                    question=styled_query,
+                    file_filter=selected_docs if selected_docs else st.session_state.get("indexed_file_names", []),
                     top_k=num_results,
-                    style=style,
-                    file_names=st.session_state.get("indexed_file_names"),
                 )
                 st.markdown("#### Answer")
                 st.markdown(result["answer"])
