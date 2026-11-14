@@ -90,7 +90,14 @@ def _configure_models():
     if not api_key:
         raise ValueError("PLATFORM_API_KEY (or OPENAI_API_KEY) is not set.")
     api_base = PLATFORM_API_BASE
-    Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-large", api_key=api_key, api_base=api_base, embed_batch_size=10)
+    # Fail fast: llama-index defaults are max_retries=10 + timeout=60, applied BOTH
+    # in its tenacity wrapper and inside the OpenAI SDK client — nested retries that
+    # can stall a single batch for 10+ minutes with no visible error.
+    Settings.embed_model = OpenAIEmbedding(
+        model=os.getenv("PLATFORM_EMBED_MODEL", "text-embedding-3-large"),
+        api_key=api_key, api_base=api_base,
+        embed_batch_size=10, max_retries=2, timeout=30,
+    )
     Settings.llm = OpenAI(model="azure.claude-sonnet-5-5", api_key=api_key, api_base=api_base)
     Settings.node_parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
 
@@ -131,6 +138,13 @@ def build_index_from_memory(files: list[tuple[str, bytes]]):
         raise ValueError("No content could be extracted from the uploaded files.")
 
     logger.info(f"Embedding {len(all_nodes)} total chunks across {len(files)} documents...")
+    # Preflight: one tiny call so a bad model name / key / endpoint surfaces as a
+    # real error instead of a silent retry loop.
+    try:
+        Settings.embed_model.get_text_embedding("ping")
+    except Exception as exc:
+        logger.error(f"Embedding preflight failed ({type(exc).__name__}): {exc}")
+        raise RuntimeError(f"Embedding API call failed: {type(exc).__name__}: {exc}") from exc
     qdrant_client = QdrantClient(location=":memory:")
     vector_store = QdrantVectorStore(client=qdrant_client, collection_name=COLLECTION_NAME)
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
