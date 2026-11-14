@@ -90,7 +90,7 @@ def _configure_models():
     if not api_key:
         raise ValueError("PLATFORM_API_KEY (or OPENAI_API_KEY) is not set.")
     api_base = PLATFORM_API_BASE
-    Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-large", api_key=api_key, api_base=api_base, embed_batch_size=50)
+    Settings.embed_model = OpenAIEmbedding(model="text-embedding-3-large", api_key=api_key, api_base=api_base, embed_batch_size=10)
     Settings.llm = OpenAI(model="azure.claude-sonnet-5-5", api_key=api_key, api_base=api_base)
     Settings.node_parser = SentenceSplitter(chunk_size=512, chunk_overlap=50)
 
