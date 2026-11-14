@@ -77,7 +77,7 @@ def logout():
 # 4. INDEX BUILDER (runs once for the entire app, shared across all sessions)
 # -----------------------------------------------------------------------------
 @st.cache_resource(show_spinner="Indexing documents from Google Drive... (first load only)")
-def _build_global_index():
+def _build_global_index(_version=2):
     """Builds the vector index once and caches it across all user sessions."""
     import logging
     logger = logging.getLogger("askotter")
